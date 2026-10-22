@@ -7,7 +7,7 @@ from codex_runner.cli import resolve_codex
 from codex_runner.platforms import codex_command
 from codex_runner.managed import LocalServer
 
-with tempfile.TemporaryDirectory(prefix='cr-') as directory:
+with tempfile.TemporaryDirectory(prefix='cr-', dir=os.environ.get('CODEX_RUNNER_TEST_TMP')) as directory:
     home = Path(directory)
     env = dict(os.environ, CODEX_HOME=str(home))
     executable = resolve_codex()

@@ -1,6 +1,7 @@
 """Platform primitives; never use Windows kill(pid, 0) as a liveness probe."""
 import contextlib
 import os
+import platform
 from pathlib import Path
 import shutil
 import signal
@@ -93,6 +94,17 @@ def codex_command(executable, *args):
         return [sys.executable, str(path), *args]
     if WINDOWS and path.suffix.lower() in ('.cmd', '.bat'):
         # Invoke npm's JS entry point directly, avoiding cmd.exe prompt escaping.
+        arch = 'arm64' if platform.machine().lower() in ('arm64', 'aarch64') else 'x64'
+        triple = 'aarch64-pc-windows-msvc' if arch == 'arm64' else 'x86_64-pc-windows-msvc'
+        modules = path.parent / 'node_modules/@openai'
+        # Prefer the actual native process so closing a metadata/proxy child
+        # never leaves an npm launcher descendant holding the socket open.
+        for vendor in [modules / ('codex-win32-' + arch) / 'vendor',
+                       modules / 'codex/node_modules/@openai' / ('codex-win32-' + arch) / 'vendor',
+                       modules / 'codex/vendor']:
+            native = vendor / triple / 'bin/codex.exe'
+            if native.is_file():
+                return [str(native), *args]
         entry = path.parent / 'node_modules/@openai/codex/bin/codex.js'
         node = path.parent / 'node.exe'
         node = str(node) if node.is_file() else shutil.which('node')

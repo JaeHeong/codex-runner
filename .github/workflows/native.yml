@@ -37,7 +37,24 @@ jobs:
       - name: Install pinned Codex for auth-free IPC test
         run: npm install -g @openai/codex@0.163.0
       - name: Native shared daemon IPC
+        if: runner.os != 'Windows'
         run: python scripts/smoke_native.py
+      - name: Native Windows IPC under a non-administrator login
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $password = ConvertTo-SecureString (([guid]::NewGuid().ToString()) + '!Aa1') -AsPlainText -Force
+          New-LocalUser -Name CodexRunnerTest -Password $password | Out-Null
+          $credential = [pscredential]::new("$env:COMPUTERNAME\CodexRunnerTest", $password)
+          $env:CODEX_RUNNER_TEST_TMP = 'C:\Windows\Temp'
+          $python = (Get-Command python).Source
+          $script = (Resolve-Path scripts/smoke_native.py).Path
+          $out = Join-Path $env:RUNNER_TEMP 'native-ipc.stdout'
+          $err = Join-Path $env:RUNNER_TEMP 'native-ipc.stderr'
+          $process = Start-Process -FilePath $python -ArgumentList "`"$script`"" -Credential $credential -LoadUserProfile -WorkingDirectory 'C:\Windows\Temp' -RedirectStandardOutput $out -RedirectStandardError $err -Wait -PassThru
+          Get-Content $out
+          Get-Content $err
+          if ($process.ExitCode -ne 0) { exit $process.ExitCode }
       - name: Build standalone command
         run: python -m PyInstaller --clean --noconfirm --onefile --name codex-runner --collect-all codex_runner --collect-all curses packaging/native_entry.py
       - name: Check standalone command
