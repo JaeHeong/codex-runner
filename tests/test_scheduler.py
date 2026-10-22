@@ -41,7 +41,7 @@ class SchedulerTests(unittest.TestCase):
         for job in self.jobs[:count]:
             self.store.add(job)
 
-    def until(self, predicate, timeout=8):
+    def until(self, predicate, timeout=20 if os.name == 'nt' else 8):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             self.scheduler.tick()
@@ -58,7 +58,7 @@ class SchedulerTests(unittest.TestCase):
         first, second = self.jobs[:2]
         self.fixture.write_text(json.dumps({'modes': {first['id']: 'sleep'}}))
         self.add()
-        self.until(lambda: self.store.get(first['id']).get('pid') and self.store.get(second['id'])['status'] == 'complete')
+        self.until(lambda: self.store.get(first['id']).get('pid') and self.store.get(second['id'])['status'] == 'complete' and len(self.calls()) == 2)
         self.assertEqual(self.store.get(first['id'])['status'], 'running')
         for _ in range(15):
             self.scheduler.tick()

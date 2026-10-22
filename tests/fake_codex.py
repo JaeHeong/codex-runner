@@ -32,8 +32,18 @@ elif sys.argv[1] == 'app-server':
 else:
     data = load()
     data['mode'] = data.get('modes', {}).get(sys.argv[-2], data.get('mode'))
-    with state.with_suffix('.calls').open('a') as out:
-        out.write(json.dumps(sys.argv[1:]) + '\n')
+    # Windows append handles do not serialize two independent fixture writers.
+    # Use the same cross-platform file lock as the daemon for this audit stream.
+    from codex_runner.platforms import lock_file
+    with state.with_suffix('.calls.lock').open('a+b') as lock:
+        while True:
+            try:
+                lock_file(lock)
+                break
+            except BlockingIOError:
+                time.sleep(.01)
+        with state.with_suffix('.calls').open('a', encoding='utf-8') as out:
+            out.write(json.dumps(sys.argv[1:]) + '\n')
     if data.get('mode') == 'quota_error':
         data['used'] = 100
         state.write_text(json.dumps(data))
