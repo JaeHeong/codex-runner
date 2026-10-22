@@ -205,10 +205,14 @@ codex-runner service install
 codex-runner
 ```
 
+Native macOS builds target macOS 14+ on Apple Silicon and macOS 15+ on Intel.
+
 Windows x64: download the Windows ZIP from the archive, extract it to a permanent
 user directory, and run `codex-runner.exe service install` from that directory.
 The ZIP includes Python and the terminal UI dependency. Codex CLI and its ChatGPT
-login are separate prerequisites. A WinGet manifest is provided under `/winget/`;
+login are separate prerequisites. The `/winget/` guide also provides a PowerShell
+installer that verifies the catalog hash, adds the user PATH and registers the
+background service. A WinGet manifest is provided under `/winget/`;
 public `winget install` availability depends on the community repository accepting
 it. The archive URL is a download host, not a WinGet source server.
 
@@ -220,6 +224,11 @@ Codex. Use a normal, non-elevated Windows terminal. Service stop/uninstall leave
 Codex history, registrations and the shared daemon intact. Avoid installing a
 second service for the same state directory.
 
+Before a package upgrade, stop Runner with `codex-runner service stop`; start
+it afterward with `codex-runner service start`. Shared managed Codex work stays
+in its separate daemon. The Windows installer performs this stop before copying
+updated files.
+
 Default state directories are `~/.local/state/codex-runner` (Linux),
 `~/Library/Application Support/CodexRunner` (macOS), and
 `%LOCALAPPDATA%\CodexRunner` (Windows). `--state-dir` or
@@ -229,7 +238,11 @@ uses the user's inherited AppData permissions. Keep custom state paths private.
 Managed sessions must be on the same machine, user account and `CODEX_HOME` as
 the desktop/CLI session. Windows-native and WSL histories are separate. Windows
 uses the official `codex app-server proxy` to connect to the shared local socket;
-macOS/Linux connect directly. Neither connection starts a duplicate session writer.
+macOS/Linux connect directly. If a Windows launcher prevents detached processes,
+Runner waits for the shared daemon instead of becoming a permanent error. Open
+Codex desktop/CLI or run `codex app-server daemon start` in a normal terminal.
+The Windows CI checks native socket IPC as a standard user using a test-owned
+foreground server, since GitHub’s outer job prevents detached descendants. Neither connection starts a duplicate session writer.
 
 ### Idle, waiting and completion
 

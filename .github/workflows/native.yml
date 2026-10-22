@@ -39,7 +39,7 @@ jobs:
       - name: Native shared daemon IPC
         if: runner.os != 'Windows'
         run: python scripts/smoke_native.py
-      - name: Native Windows IPC under a non-administrator login
+      - name: Native Windows socket IPC under a non-administrator login
         if: runner.os == 'Windows'
         shell: pwsh
         run: |

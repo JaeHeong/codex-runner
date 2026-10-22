@@ -79,6 +79,21 @@ class ManagedTests(unittest.TestCase):
         self.assertIsNone(job.get('managed_turn_id'))
         self.assertEqual(job['turns'], 1)
 
+    def test_windows_restricted_launcher_waits_for_desktop_daemon_without_sending_input(self):
+        with patch('codex_runner.managed.LocalServer', side_effect=FileNotFoundError()), \
+                patch('codex_runner.managed.WINDOWS', True), \
+                patch('codex_runner.managed.subprocess.run') as start:
+            start.return_value.returncode = 1
+            start.return_value.stderr = b'this Windows launcher prevents background processes from outliving it'
+            job = self.run_job()
+        self.assertEqual(job['status'], 'waiting')
+        self.assertTrue(job['watch_external'])
+        self.assertIn('normal terminal', job['detail'])
+        self.assertFalse(any(m in ('turn/start', 'turn/interrupt') for m, p in self.calls))
+        self.thread_status = 'active'
+        self.assertEqual(self.run_job()['status'], 'waiting')
+        self.assertFalse(any(m == 'turn/start' for m, p in self.calls))
+
     def test_completed_task_is_detected_without_sending_a_message(self):
         self.latest_turn = copy.deepcopy(self.turn)
         job = self.run_job()

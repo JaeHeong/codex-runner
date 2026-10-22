@@ -24,13 +24,14 @@ formula = f'''class CodexRunner < Formula
   homepage "https://github.com/JaeHeong/codex-runner"
   version "{__version__}"
   license "MIT"
-  depends_on :macos
+  depends_on macos: :sonoma
 
   on_arm do
     url "{base}{arm}"
     sha256 "{arm_sha}"
   end
   on_intel do
+    depends_on macos: :sequoia
     url "{base}{intel}"
     sha256 "{intel_sha}"
   end

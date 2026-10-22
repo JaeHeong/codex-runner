@@ -383,6 +383,13 @@ def run_managed(worker, job):
             started = subprocess.run(codex_command(job['codex'], 'app-server', 'daemon', 'start'),
                                      env=child_env(job), capture_output=True, timeout=45)
             if started.returncode:
+                reason = (started.stderr or b'').decode('utf-8', errors='replace')
+                if WINDOWS and any(text in reason for text in (
+                        'non-elevated terminal', 'prevents background processes from outliving it')):
+                    store.patch(sid, expected=['running'], status='waiting', next_run=time.time() + 30,
+                                watch_external=True,
+                                detail='Waiting for the shared Codex daemon; open Codex desktop/CLI or run codex app-server daemon start in a normal terminal')
+                    return
                 raise RunnerError('Could not start the local managed Codex daemon; inspect codex app-server daemon')
             server = LocalServer(home)
     tid = job.get('managed_turn_id')

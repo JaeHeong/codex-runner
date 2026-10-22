@@ -45,7 +45,7 @@ for package in ['pyinstaller', 'windows-curses']:
     '(GPL with bootloader exception permitting distribution of this MIT application). '
     'See licenses/. Codex itself is installed separately and is not bundled.\n', encoding='utf-8')
 if sys.platform == 'win32':
-    with zipfile.ZipFile(staging.with_suffix('.zip'), 'w', zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(Path(str(staging) + '.zip'), 'w', zipfile.ZIP_DEFLATED) as archive:
         for path in staging.rglob('*'):
             if path.is_file(): archive.write(path, path.relative_to(staging))
     shutil.copy2(staging / exe, staging.parent / f'codex-runner-{__version__}-{args.platform}.exe')
