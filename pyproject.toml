@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-runner"
+dynamic = ["version"]
+description = "Resume local Codex sessions after subscription quota resets"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["windows-curses>=2.4; sys_platform == 'win32'"]
+
+[project.scripts]
+codex-runner = "codex_runner.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "codex_runner.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

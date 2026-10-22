@@ -1,0 +1,16 @@
+[Unit]
+Description=Resume registered Codex sessions after subscription quota resets
+Documentation=https://apt.jaehyeong.com/
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/codex-runner daemon
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=45
+KillMode=control-group
+UMask=0077
+
+[Install]
+WantedBy=default.target
