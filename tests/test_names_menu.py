@@ -22,6 +22,19 @@ SID1 = '01a151c8-b419-73f3-8fd2-119ba622ac45'
 SID2 = '01a159ab-763b-7bf0-8cfa-caf85e9ca6f4'
 
 
+def wait_terminal(proc, master, timeout=10):
+    # macOS PTYs have much smaller output buffers; drain repaint output while
+    # waiting, otherwise curses blocks before it can process the queued Quit.
+    end = time.monotonic() + timeout
+    while proc.poll() is None and time.monotonic() < end:
+        if select.select([master], [], [], .05)[0]:
+            try:
+                os.read(master, 65536)
+            except OSError:
+                break
+    return proc.wait(timeout=2)
+
+
 class NamesTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -181,7 +194,7 @@ class NamesTests(unittest.TestCase):
             os.write(master, b'e'); until('새 문구'.encode())
             received = b''; os.write(master, b'edited\n')
             until(b'Codex Runner')
-            os.write(master, b'q'); self.assertEqual(proc.wait(timeout=5), 0)
+            os.write(master, b'q'); self.assertEqual(wait_terminal(proc, master), 0)
             self.assertEqual(self.store.get(SID2)['prompt'], 'edited')
             self.assertEqual(self.store.get(SID1)['prompt'], 'old')
             for sid in (SID1, SID2):
@@ -189,7 +202,7 @@ class NamesTests(unittest.TestCase):
                 self.assertEqual(self.store.get(sid)['next_run'], 123)
         finally:
             if proc.poll() is None:
-                proc.terminate(); proc.wait(timeout=5)
+                proc.terminate(); wait_terminal(proc, master)
             os.close(master)
 
     @unittest.skipIf(os.name == 'nt', 'POSIX terminal integration')
@@ -208,13 +221,13 @@ class NamesTests(unittest.TestCase):
                     received += os.read(master, 65536)
             self.assertIn(b'Codex Runner', received)
             os.write(master, b'q')
-            self.assertEqual(proc.wait(timeout=5), 0)
+            self.assertEqual(wait_terminal(proc, master), 0)
             self.assertEqual(self.store.get(SID1)['status'], 'error')
             self.assertEqual(self.store.get(SID2)['status'], 'error')
             self.assertEqual(self.store.get(SID1)['next_run'], 123)
         finally:
             if proc.poll() is None:
-                proc.terminate(); proc.wait(timeout=5)
+                proc.terminate(); wait_terminal(proc, master)
             os.close(master)
 
 

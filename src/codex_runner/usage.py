@@ -102,7 +102,7 @@ def limit_line(label, window, weekly=False):
 def usage_lines(value):
     if value is None:
         return ['Codex usage · 조회 중…  F5: 새로고침', 'Context window: 조회 중…', '5h limit: 조회 중…', 'Weekly limit: 조회 중…']
-    when = dt.datetime.fromtimestamp(value.get('limits_at', value['fetched_at'])).astimezone().strftime('%H:%M:%S')
+    when = dt.datetime.fromtimestamp(value.get('limits_at', value['fetched_at']), dt.timezone.utc).astimezone().strftime('%H:%M:%S')
     warning = ' · cached / 조회 오류' if value.get('limits_error') and value.get('limits') else ' · 조회 오류' if value.get('limits_error') else ''
     state = value.get('limits') or {}
     if state.get('rateLimitReachedType') or state.get('spendControlReached'):

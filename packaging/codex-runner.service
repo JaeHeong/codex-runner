@@ -9,7 +9,7 @@ ExecStart=/usr/bin/codex-runner daemon
 Restart=on-failure
 RestartSec=15
 TimeoutStopSec=45
-KillMode=control-group
+KillMode=process
 UMask=0077
 
 [Install]

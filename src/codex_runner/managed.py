@@ -256,7 +256,7 @@ def inspect_latest(server, job):
     """Read runtime + last turn. A successful turn alone is not task completion."""
     sid = job['id']
     thread = server.rpc('thread/read', {'threadId': sid, 'includeTurns': False})['thread']
-    if thread['id'] != sid or str(Path(thread['cwd']).resolve()) != job['cwd']:
+    if thread['id'] != sid or Path(thread['cwd']).resolve() != Path(job['cwd']).resolve():
         raise RunnerError('Managed thread ID or working directory does not match the registration')
     runtime = (thread.get('status') or {}).get('type')
     if runtime not in ('idle', 'active', 'notLoaded', 'systemError'):
@@ -393,7 +393,7 @@ def run_managed(worker, job):
     try:
         # Subscribe to the existing server's thread. Never start a second CLI writer.
         thread = server.rpc('thread/resume', {'threadId': sid, 'excludeTurns': True})['thread']
-        if thread['id'] != sid or str(Path(thread['cwd']).resolve()) != job['cwd']:
+        if thread['id'] != sid or Path(thread['cwd']).resolve() != Path(job['cwd']).resolve():
             raise RunnerError('Managed thread ID or working directory does not match the registration')
         if job.get('managed_start_pending') and not tid:
             raise RunnerError('Previous turn/start had no confirmed ID; inspect the session before retrying')

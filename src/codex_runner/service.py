@@ -130,7 +130,7 @@ def manage_service(store, action):
         quoted = ' '.join('"' + part.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
                           for part in command(base))
         path.write_text('[Unit]\nDescription=Codex Runner\n[Service]\nType=simple\nExecStart=' + quoted +
-                        '\nRestart=on-failure\nRestartSec=15\nTimeoutStopSec=45\nUMask=0077\n'
+                        '\nRestart=on-failure\nRestartSec=15\nTimeoutStopSec=45\nKillMode=process\nUMask=0077\n'
                         '[Install]\nWantedBy=default.target\n', encoding='utf-8')
         run('systemctl', '--user', 'daemon-reload')
         run('systemctl', '--user', 'enable', '--now', 'codex-runner.service')
