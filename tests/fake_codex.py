@@ -34,6 +34,7 @@ else:
     data['mode'] = data.get('modes', {}).get(sys.argv[-2], data.get('mode'))
     # Windows append handles do not serialize two independent fixture writers.
     # Use the same cross-platform file lock as the daemon for this audit stream.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
     from codex_runner.platforms import lock_file
     with state.with_suffix('.calls.lock').open('a+b') as lock:
         while True:

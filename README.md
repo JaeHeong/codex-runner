@@ -1,19 +1,21 @@
 # Codex Runner
 
 Resume an existing local Codex session after its ChatGPT subscription quota resets.
-The CLI registers sessions in a private per-user queue; a systemd user service
+The CLI registers sessions in a private per-user queue; a per-user background service
 manages multiple sessions independently, with up to four concurrent workers by
 default. No model call is made while waiting.
 
-Version: **0.7.0**. Tested with **Codex CLI 0.163.0**. Supports Linux, macOS and Windows with Python 3.10+
-and APT 2.4+ for the inline-key repository configuration. Packages are architecture
-independent; the repository advertises amd64 and arm64. Ubuntu 22.04+ and Debian 12+
-meet these baseline runtime requirements; other distributions/CLI versions need
-their own validation. This is an independent community tool, not an OpenAI product.
+Version: **0.7.0**. Tested with **Codex CLI 0.163.0**. Linux packages require
+Python 3.10+ and APT 2.4+ for inline-key repository configuration. The Debian
+package is architecture independent; the repository advertises amd64 and arm64.
+Ubuntu 22.04+ and Debian 12+ meet these runtime requirements. Windows and macOS
+native downloads bundle Python and are specific to the listed CPU architecture.
+Other distributions/CLI versions need their own validation. This is an independent community tool, not an OpenAI product.
 
 ## Install
 
-Run these commands on the server where your Codex history and project files live:
+Linux APT installation on the server where your Codex history and project files live
+(macOS and Windows installation is described below):
 
 ```sh
 curl -fsSLo /tmp/codex-runner.sources https://apt.jaehyeong.com/codex-runner.sources
