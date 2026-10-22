@@ -153,7 +153,7 @@ class LogSourceTests(unittest.TestCase):
         self.assertNotIn('item/completed', self.output.getvalue())
         raw_output = io.StringIO()
         show_logs(self.store, 'session', raw=True, output=raw_output)
-        self.assertIn(raw, raw_output.getvalue())
+        self.assertIn(raw, raw_output.getvalue().replace('\r\n', '\n'))
         self.assertNotIn('[Runner]', raw_output.getvalue())
 
     def test_follow_handles_partial_json_lines_and_new_attempts(self):

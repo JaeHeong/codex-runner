@@ -16,10 +16,11 @@ from .platforms import WINDOWS, process_alive
 
 
 def command(base, action='daemon'):
+    entry = shutil.which('codex-runner')
     if getattr(sys, 'frozen', False):
-        prefix = [sys.executable]
+        # Preserve a stable Homebrew/WinGet link across package upgrades.
+        prefix = [entry if entry and os.path.samefile(entry, sys.executable) else sys.executable]
     else:
-        entry = shutil.which('codex-runner')
         prefix = [entry] if entry else [sys.executable, '-m', 'codex_runner.cli']
     return prefix + ['--state-dir', str(base), *action.split()]
 

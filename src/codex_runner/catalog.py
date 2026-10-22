@@ -24,7 +24,7 @@ def updated(thread):
 
 
 def date_text(value):
-    return dt.datetime.fromtimestamp(value).astimezone().strftime('%Y-%m-%d %H:%M') if value else '기록 없음'
+    return dt.datetime.fromtimestamp(value, dt.timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M') if value else '기록 없음'
 
 
 def stored_sessions(home):
