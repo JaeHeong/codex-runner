@@ -9,7 +9,7 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = re.search(r"__version__ = '([^']+)'", (ROOT / 'src/codex_runner/__init__.py').read_text())[1]
-HOST = 'https://apt.jaehyeong.com'
+HOST = 'https://packages.jaehyeong.com'
 
 
 def run(*args, **kwargs):

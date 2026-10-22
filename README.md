@@ -189,6 +189,9 @@ keys have separate locks. Confirmed exhaustion makes the affected registrations
 wait; multiple sessions do not create additional account allowance. Background
 checks use metadata and do not consume model turns.
 
+Public source and native CI: https://github.com/JaeHeong/codex-runner .
+The GitOps repository keeps infrastructure and the archive publisher private.
+
 ### macOS and Windows
 
 Shared downloads and installation guides: https://packages.jaehyeong.com/ .
@@ -498,7 +501,7 @@ Package removal leaves your private state and Codex sessions intact.
 
 ## Development and releases
 
-Source archive: https://apt.jaehyeong.com/projects/codex-runner/0.7.0/codex-runner-0.7.0.tar.gz
+Source archive: https://packages.jaehyeong.com/projects/codex-runner/0.7.0/codex-runner-0.7.0.tar.gz
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests -v

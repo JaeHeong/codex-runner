@@ -120,7 +120,9 @@ def manage_service(store, action):
         elif action == 'status':
             run('launchctl', 'print', target + '/' + label)
         elif action in ('stop', 'uninstall'):
-            run('launchctl', 'bootout', target + '/' + label)
+            if subprocess.run(['launchctl', 'print', target + '/' + label],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                run('launchctl', 'bootout', target + '/' + label)
             if action == 'uninstall':
                 path.unlink(missing_ok=True)
         return
