@@ -364,7 +364,7 @@ def preflight_worker(worker, job, server):
     elif action == 'idle':
         worker.store.patch(job['id'], expected=['running'], status='idle', next_run=time.time() + 15,
                            detail=decision['detail'], idle_turn_id=decision['turn_id'], watch_external=True,
-                           approved_completed_turn=None)
+                           approved_completed_turn=None, last_response_preview=decision.get('preview'))
         if job.get('idle_turn_id') != decision['turn_id']:
             worker.note(job, 'Idle: ' + decision['detail'] + ' (no message sent)')
     else:

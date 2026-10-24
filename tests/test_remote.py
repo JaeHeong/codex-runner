@@ -45,6 +45,13 @@ class RemoteTests(unittest.TestCase):
         self.fixture.run_job()
         self.assertEqual(len([m for m,p in self.fixture.calls if m == 'turn/start']), 1)
 
+    def test_plain_final_question_is_included_in_idle_notification(self):
+        self.fixture.latest_turn={'id':'plain-question','status':'completed','items':[
+            {'type':'agentMessage','phase':'final_answer','text':'어느 환경에 배포할까요?'}]}
+        self.assertEqual(self.fixture.run_job()['status'],'idle')
+        self.assertIn('어느 환경에 배포할까요?',notifications(self.store)[0]['text'])
+        self.assertFalse(any(m=='turn/start' for m,p in self.fixture.calls))
+
     def test_duplicate_interaction_never_queues_a_second_turn(self):
         for _ in range(2):
             self.assertEqual(enqueue_input(self.store, self.job['id'], 'task', 'same'), 'pending')

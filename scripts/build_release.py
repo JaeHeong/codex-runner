@@ -110,7 +110,7 @@ def main():
     with tarfile.open(archive, 'w:gz') as tar:
         for name in ['src', 'packaging', 'scripts', 'tests', 'README.md', 'LICENSE', 'pyproject.toml']:
             tar.add(ROOT / name, arcname='codex-runner-' + VERSION + '/' + name,
-                    filter=lambda x: None if '__pycache__' in x.name or x.name.endswith('.pyc') else x)
+                    filter=lambda x: None if '__pycache__' in x.name or '.egg-info' in x.name or x.name.endswith('.pyc') else x)
     print('Built:', deb, archive)
     print('Add these artifacts with tools/package-archive/archive.py, then publish the shared archive.')
 

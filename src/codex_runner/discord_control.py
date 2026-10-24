@@ -48,6 +48,8 @@ class Control:
     def status(store, job):
         name = job.get('name') or job['id'][:12]
         detail = (job.get('detail') or '')[:900]
+        if job['status'] == 'idle' and job.get('last_response_preview'):
+            detail += '\n최근 응답:\n' + job['last_response_preview'][:500]
         pending = pending_input(store, job['id'])
         qs = questions(store, job['id'])
         return (name + ' · ' + ('input' if job.get('awaiting_input') else job['status']) + '\n' + detail +
@@ -75,7 +77,8 @@ def notifications(store):
     for sid, job in jobs.items():
         detail = job.get('detail') or ''
         quota_wait = job['status'] == 'waiting' and any(v in detail for v in (
-            'Account limit (', 'Subscription quota unavailable', 'usageLimitExceeded'))
+            'Account limit (', 'Subscription quota unavailable', 'usageLimitExceeded',
+            'Waiting for the shared Codex daemon'))
         if job['status'] not in ('blocked', 'error', 'complete', 'idle', 'paused') and not quota_wait:
             # Clear the terminal-state fingerprint when real work resumes, so
             # the same blocker in a later attempt generates a new alert.
