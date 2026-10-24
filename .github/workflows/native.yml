@@ -19,9 +19,11 @@ jobs:
           - os: macos-15-intel
             artifact: macos-x64
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     env:
       PYTHONUTF8: '1'
       PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUNBUFFERED: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -51,7 +53,13 @@ jobs:
           $script = (Resolve-Path scripts/smoke_native.py).Path
           $out = Join-Path $env:RUNNER_TEMP 'native-ipc.stdout'
           $err = Join-Path $env:RUNNER_TEMP 'native-ipc.stderr'
-          $process = Start-Process -FilePath $python -ArgumentList "`"$script`"" -Credential $credential -LoadUserProfile -WorkingDirectory 'C:\Windows\Temp' -RedirectStandardOutput $out -RedirectStandardError $err -Wait -PassThru
+          $process = Start-Process -FilePath $python -ArgumentList "`"$script`"" -Credential $credential -LoadUserProfile -WorkingDirectory 'C:\Windows\Temp' -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
+          if (!$process.WaitForExit(180000)) {
+            Get-Content $out
+            Get-Content $err
+            Stop-Process -Id $process.Id -Force
+            throw 'Native Windows test timed out'
+          }
           Get-Content $out
           Get-Content $err
           if ($process.ExitCode -ne 0) { exit $process.ExitCode }

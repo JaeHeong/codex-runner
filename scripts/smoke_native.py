@@ -1,5 +1,6 @@
 """Auth-free IPC smoke test: a private test home, no model or user session."""
 import os
+import faulthandler
 from pathlib import Path
 import subprocess
 import tempfile
@@ -7,6 +8,8 @@ import time
 from codex_runner.cli import resolve_codex
 from codex_runner.platforms import codex_command, stop_process
 from codex_runner.managed import LocalServer
+
+faulthandler.dump_traceback_later(120, exit=True)
 
 with tempfile.TemporaryDirectory(prefix='cr-', dir=os.environ.get('CODEX_RUNNER_TEST_TMP')) as directory:
     home = Path(directory)
@@ -29,6 +32,7 @@ with tempfile.TemporaryDirectory(prefix='cr-', dir=os.environ.get('CODEX_RUNNER_
                 time.sleep(.1)
         else:
             subprocess.run(command + ['start'], env=env, check=True, timeout=120)
+        print('Native test server ready', flush=True)
         server = LocalServer(home)
         try:
             result = server.rpc('thread/list', {'limit': 1})
@@ -36,8 +40,13 @@ with tempfile.TemporaryDirectory(prefix='cr-', dir=os.environ.get('CODEX_RUNNER_
             print('Native local WebSocket IPC OK; no model request made')
         finally:
             server.close()
+            print('Native test proxy closed', flush=True)
     finally:
         if owned:
             stop_process(owned)  # Include the test server’s own code-host children.
+            print('Native test process tree stopped', flush=True)
         else:
             subprocess.run(command + ['stop'], env=env, timeout=60, check=False)
+
+faulthandler.cancel_dump_traceback_later()
+print('Native test home cleaned', flush=True)
