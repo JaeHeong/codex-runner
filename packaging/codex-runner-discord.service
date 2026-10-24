@@ -1,0 +1,15 @@
+[Unit]
+Description=Discord controls and alerts for Codex Runner
+After=network-online.target codex-runner.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/codex-runner discord run
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=45
+KillMode=process
+UMask=0077
+
+[Install]
+WantedBy=default.target

@@ -29,7 +29,7 @@ else:
     import builtins
     builtins.license._Printer__setup()
     (notices / 'Python-LICENSE.txt').write_text('\n'.join(builtins.license._Printer__lines), encoding='utf-8')
-for package in ['pyinstaller', 'windows-curses']:
+for package in ['pyinstaller', 'windows-curses', 'discord.py', 'aiohttp', 'aiohappyeyeballs', 'aiosignal', 'attrs', 'frozenlist', 'multidict', 'propcache', 'yarl', 'idna', 'typing_extensions']:
     try:
         distribution = metadata.distribution(package)
     except metadata.PackageNotFoundError:
@@ -43,6 +43,7 @@ for package in ['pyinstaller', 'windows-curses']:
     'This distribution includes CPython (PSF License). Windows builds include windows-curses '
     '(BSD license) and PDCurses (public domain). The executable bootloader is PyInstaller '
     '(GPL with bootloader exception permitting distribution of this MIT application). '
+    'Discord support includes discord.py (MIT) and aiohttp with its dependencies; see their bundled license files. '
     'See licenses/. Codex itself is installed separately and is not bundled.\n', encoding='utf-8')
 if sys.platform == 'win32':
     with zipfile.ZipFile(Path(str(staging) + '.zip'), 'w', zipfile.ZIP_DEFLATED) as archive:

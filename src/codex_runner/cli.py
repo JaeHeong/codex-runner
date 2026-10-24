@@ -65,6 +65,8 @@ class Store:
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.execute('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, data TEXT NOT NULL)')
         self.db.commit()
+        from .remote import initialize
+        initialize(self.db)
 
     def get(self, sid):
         row = self.db.execute('SELECT data FROM jobs WHERE id=?', (sid,)).fetchone()
@@ -118,12 +120,16 @@ class Store:
             self.db.rollback()
             raise
 
-    def patch(self, sid, expected=None, **values):
+    def patch(self, sid, expected=None, wake_for_input=False, **values):
         # Compare-and-set prevents a finishing child from overwriting a CLI pause.
         try:
             self.db.execute('BEGIN IMMEDIATE')
             job = self.get(sid)
             if expected is None or job['status'] in expected:
+                if wake_for_input and values.get('status') in ('complete', 'blocked'):
+                    from .remote import pending_input
+                    if pending_input(self, sid):
+                        values.update(status='queued', detail='Human follow-up queued; waiting for a safe turn boundary', next_run=0)
                 job.update(values, updated=time.time())
                 self.db.execute('UPDATE jobs SET data=? WHERE id=?', (json.dumps(job), sid))
             self.db.commit()
@@ -166,13 +172,20 @@ class Store:
             raise
 
     def delete(self, sid):
-        with self.db:
+        try:
+            self.db.execute('BEGIN IMMEDIATE')
             job = self.get(sid)
             if job['status'] == 'running':
                 raise RunnerError('Pause the session and wait for its process to exit before removing it')
             if process_alive(job.get('pid')):
                 raise RunnerError('Session process is still stopping; retry remove shortly')
+            self.db.execute("UPDATE remote_inputs SET status='cancelled' WHERE session_id=? AND status='pending'", (sid,))
+            self.db.execute("UPDATE remote_questions SET status='expired',answer=NULL WHERE session_id=? AND status IN ('pending','answered','submitting')", (sid,))
             self.db.execute('DELETE FROM jobs WHERE id=?', (sid,))
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
 
     def migrate_runtime_errors(self):
         """Recheck the old systemError guard; this never grants a turn retry."""
@@ -390,7 +403,7 @@ class Worker:
         detail = summary
         if waiting_for and status in ('queued', 'complete'):
             status, detail = 'waiting', waiting_for
-        self.store.patch(job['id'], expected=['running'], status=status, summary=summary,
+        self.store.patch(job['id'], expected=['running'], wake_for_input=True, status=status, summary=summary,
                          same_summary_count=repeats, detail=detail, next_run=time.time() + (15 if status == 'waiting' else 2),
                          turns=current.get('turns', 0) + 1, pid=None, managed_turn_id=None)
         self.note(job, status + ': ' + detail)
@@ -713,6 +726,20 @@ def cli(argv=None):
     run = sub.add_parser('daemon'); run.add_argument('--once', action='store_true', help='Process at most one ready session, then exit')
     run.add_argument('--max-parallel', type=int, default=os.environ.get('CODEX_RUNNER_MAX_PARALLEL', '4'),
                      help='Maximum concurrent session workers (default: 4; CODEX_RUNNER_MAX_PARALLEL)')
+    send = sub.add_parser('send', help='Queue one human follow-up for a managed session')
+    send.add_argument('session_id')
+    send.add_argument('--text', required=True)
+    chat = sub.add_parser('discord', help='Private Discord setup and bot service')
+    chat_sub = chat.add_subparsers(dest='discord_action', required=True)
+    config = chat_sub.add_parser('configure')
+    config.add_argument('--guild-id', required=True)
+    config.add_argument('--channel-id', required=True)
+    config.add_argument('--allowed-user', action='append', default=[])
+    config.add_argument('--allow-all-users', action='store_true')
+    for name in ['token', 'doctor', 'invite', 'run']:
+        chat_sub.add_parser(name)
+    chat_service = chat_sub.add_parser('service')
+    chat_service.add_argument('action', choices=['install','start','stop','status','uninstall','run'])
     service = sub.add_parser('service', help='Manage this user’s background service')
     service.add_argument('action', choices=['install', 'start', 'stop', 'status', 'uninstall', 'run'])
     for name in ['limits', 'doctor']:
@@ -721,7 +748,7 @@ def cli(argv=None):
     if not WINDOWS and os.geteuid() == 0:
         raise RunnerError('Run as your Codex login user, not root; sudo is only needed to install the package')
     store = Store(args.state_dir)
-    if args.command in ('pause', 'resume', 'remove', 'prompt', 'logs', 'alias'):
+    if args.command in ('pause', 'resume', 'remove', 'prompt', 'logs', 'alias', 'send'):
         args.session_id = select_session(store, args.session_id)
     if args.command in (None, 'menu', 'ui'):
         from .menu import run_menu
@@ -784,6 +811,14 @@ def cli(argv=None):
                           'retry_at': stamp(when) if when else None, 'version': __version__}, indent=2))
         if args.command == 'doctor':
             print('CLI capabilities and ChatGPT quota access OK. No model request was made.')
+    elif args.command == 'send':
+        from .remote import enqueue_input
+        identity = 'cli:' + str(uuid.uuid4())
+        enqueue_input(store, args.session_id, args.text, identity)
+        print('Queued one human follow-up:', identity)
+    elif args.command == 'discord':
+        from .discord_cli import discord_cli
+        discord_cli(store, args)
     elif args.command == 'service':
         from .service import manage_service
         manage_service(store, args.action)

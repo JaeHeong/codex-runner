@@ -288,6 +288,8 @@ def inspect_latest(server, job):
     if child_state:
         return dict(decision, action=child_state[0], detail=child_state[1], linked_agent_check=True)
     status = turn.get('status')
+    if job.get('_explicit_input') and status in ('completed', 'failed', 'interrupted'):
+        return dict(decision, action='resume', detail='Explicit human follow-up for this session')
     if status in ('failed', 'interrupted'):
         if job.get('watch_external') and not quota_error:
             return dict(decision, action='idle', detail='External turn ' + status + '; no automatic retry without a confirmed quota failure')
@@ -348,7 +350,8 @@ def resume_preflight(store, job, allow_completed=False, confirm=None):
 
 
 def preflight_worker(worker, job, server):
-    decision = inspect_latest(server, job)
+    from .remote import pending_input
+    decision = inspect_latest(server, dict(job, _explicit_input=bool(pending_input(worker.store, job['id']))))
     action = decision['action']
     if action == 'resume':
         return True
@@ -420,16 +423,18 @@ def run_managed(worker, job):
                 return
             if not preflight_worker(worker, current, server):
                 return
-            params = {'threadId': sid, 'input': [{'type': 'text', 'text': job.get('prompt') or PROMPT}],
+            from .remote import pending_input, begin_delivery, confirm_delivery
+            followup = pending_input(store, sid)
+            params = {'threadId': sid, 'input': [{'type': 'text', 'text': followup['text'] if followup else job.get('prompt') or PROMPT}],
                       'cwd': job['cwd'], 'approvalPolicy': 'never', 'sandboxPolicy': sandbox_policy(job),
                       'outputSchema': SCHEMA}
             if job.get('model'):
                 params['model'] = job['model']
             # A lost start response must never cause the same request to be replayed.
-            store.patch(sid, managed_start_pending=True)
+            begin_delivery(store, sid, followup['id'] if followup else None)
             turn = server.rpc('turn/start', params)['turn']
             tid = turn['id']
-            store.patch(sid, managed_turn_id=tid, managed_start_pending=False)
+            confirm_delivery(store, sid, tid, followup['id'] if followup else None)
             worker.note(job, 'Started managed turn ' + tid + ' in ' + job['cwd'])
         store.patch(sid, expected=['running'], detail='Codex managed turn ' + tid + ' is running', logfile=str(logfile))
         interrupted = False
@@ -458,12 +463,20 @@ def run_managed(worker, job):
                         if message.get('method') == 'turn/completed' and params.get('turn', {}).get('id') == tid:
                             turn = params['turn']
                         if 'id' in message and 'method' in message and params.get('turnId', tid) == tid:
-                            # Do not silently approve tool or user-input requests in unattended mode.
-                            server.rpc('turn/interrupt', {'threadId': sid, 'turnId': tid})
-                            needs_input = True
+                            from .remote import RELAY_METHODS, relay_available, record_question
+                            if relay_available(store):
+                                if message['method'] in RELAY_METHODS and params.get('turnId'):
+                                    record_question(store, job, message)
+                                    store.patch(sid, detail='Waiting for human input; question relayed to Discord')
+                            else:
+                                # Keep the original unattended behavior until a relay is online.
+                                server.rpc('turn/interrupt', {'threadId': sid, 'turnId': tid})
+                                needs_input = True
                 if time.monotonic() - last_check >= 10:
                     turn = find_turn(server, sid, tid)
                     last_check = time.monotonic()
+        from .remote import expire_turn
+        expire_turn(store, sid, tid)
         if needs_input:
             store.patch(sid, status='blocked', managed_turn_id=None,
                         detail='Managed turn requested interactive input; inspect Codex')

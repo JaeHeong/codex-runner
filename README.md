@@ -5,7 +5,7 @@ The CLI registers sessions in a private per-user queue; a per-user background se
 manages multiple sessions independently, with up to four concurrent workers by
 default. No model call is made while waiting.
 
-Version: **0.7.0**. Tested with **Codex CLI 0.163.0**. Linux packages require
+Version: **0.8.0**. Tested with **Codex CLI 0.163.0**. Linux packages require
 Python 3.10+ and APT 2.4+ for inline-key repository configuration. The Debian
 package is architecture independent; the repository advertises amd64 and arm64.
 Ubuntu 22.04+ and Debian 12+ meet these runtime requirements. Windows and macOS
@@ -245,6 +245,95 @@ Runner waits for the shared daemon instead of becoming a permanent error. Open
 Codex desktop/CLI or run `codex app-server daemon start` in a normal terminal.
 The Windows CI checks native socket IPC as a standard user using a test-owned
 foreground server, since GitHub’s outer job prevents detached descendants. Neither connection starts a duplicate session writer.
+
+### Discord remote controls and questions
+
+Version 0.8 adds an optional bot that runs as the same local user as Runner.
+It uses the Discord gateway, so no public inbound port or interaction web server
+is needed. The bot token and channel configuration stay in private local state,
+never in Git, a package, a CI secret, an Argo CD manifest or a model prompt.
+
+Linux APT users install the optional companion (the normal queue stays stdlib-only):
+
+```sh
+sudo apt update
+sudo apt install codex-runner codex-runner-discord
+codex-runner discord configure --guild-id YOUR_SERVER_ID --channel-id YOUR_CHANNEL_ID --allow-all-users
+codex-runner discord token
+codex-runner discord invite
+codex-runner discord doctor
+codex-runner discord service install
+```
+
+`token` prompts without echo and writes `discord.token` with POSIX mode 0600.
+`invite` prints a server-specific invitation with `bot` and `applications.commands`
+scopes. Approve the invite from your Discord account. Grant View Channel, Send
+Messages, Embed Links and Read Message History; channel members also need Use
+Application Commands. Message Content, Members and Presence privileged intents
+are not used. `--allow-all-users` means everyone in that exact server/channel can
+control registered work with its saved permissions. To limit operators instead,
+repeat `--allowed-user USER_ID` and omit that flag. DMs and all other channels
+are rejected, including persistent buttons, modals and autocomplete requests.
+
+Native macOS/Windows downloads include the optional bot libraries. Python users
+install `codex-runner[discord]`; Debian's companion bundles pinned discord.py and
+uses distro aiohttp. On Python 3.13+ the distro must also provide audioop-lts;
+the Python extra resolves that dependency when using a virtual environment.
+
+Commands in the configured channel:
+
+| Command | Behavior |
+| --- | --- |
+| `/runner status [session]` | Status and queued input; session names autocomplete |
+| `/runner limits [session]` | Five-hour and weekly account limits; no model call |
+| `/runner resume session` | Re-arm the normal completion/blocker checks |
+| `/runner pause session` | Pause Runner; it interrupts only a Runner-owned turn |
+| `/runner send session message` | Queue a new one-time instruction, including a reply to a blocker |
+| `/runner questions session` | Open pending questions and answer controls |
+
+Notifications cover blockers, errors, completed/idle responses, pauses and quota
+waits. Repeated metadata polls do not repeat the same notification. Buttons offer
+status, limits, resume, pause, a new-instruction modal and question answers. Bot
+restarts restore the persistent controls and replay live native questions.
+Messages sent as commands use durable interaction IDs: delivery retries cannot
+create a second queued instruction. A network failure after an uncertain model
+start stops for inspection instead of replaying the request.
+
+A plain Resume preserves the existing blocker guard. Use **추가 지시** or `/runner
+send` to provide missing information, or explicitly instruct Codex which remaining
+work to continue. Queued instructions wait for the current native turn and linked
+agents to stop, then wait for quota availability. They use the registration's saved
+sandbox, model and approval policy. They do not alter the permanent continuation
+prompt. The equivalent server command is:
+
+```sh
+codex-runner send tech --text '검증은 보류하고 진행 가능한 나머지 작업을 이어서 해줘'
+```
+
+Once connected, the bot subscribes to registered managed sessions and verified
+native child agents. A live `requestUserInput` is kept intact and shown with answer
+controls. Replies go to the existing RPC request; they do not create another turn.
+A terminal answer or expired turn invalidates the buttons. Secret questions and
+permission/tool approvals require the native Codex terminal and are never accepted
+automatically. After relay connection, transient Discord outages keep native
+questions intact for reconnection or a terminal answer. The menu shows `input`
+for a pending blocking question; the underlying worker keeps its turn ownership.
+
+The Discord service is separate from Runner:
+
+```sh
+codex-runner discord service status
+codex-runner discord service stop
+codex-runner discord service start
+codex-runner discord service uninstall
+```
+
+Stopping the bridge leaves native turns/questions intact. Uninstall disables the
+relay policy for future requests. Its logs are private (`discord-service.log` on
+macOS/Windows; the user journal on Linux). No normal channel chat is treated as
+an instruction. Model work happens only through an explicit command or the
+existing quota recovery cycle. A complete task remains stopped without a new
+instruction.
 
 ### Idle, waiting and completion
 
@@ -516,7 +605,7 @@ Package removal leaves your private state and Codex sessions intact.
 
 ## Development and releases
 
-Source archive: https://packages.jaehyeong.com/projects/codex-runner/0.7.0/codex-runner-0.7.0.tar.gz
+Source archive: https://packages.jaehyeong.com/projects/codex-runner/0.8.0/codex-runner-0.8.0.tar.gz
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests -v

@@ -45,6 +45,8 @@ def table_row(values, widths):
 
 
 def visible_status(job):
+    if job.get('awaiting_input') and job['status'] in ('running', 'waiting'):
+        return 'input'
     if job['status'] == 'running' and job.get('managed') and not job.get('managed_turn_id'):
         return 'checking'
     return job['status']

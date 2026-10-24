@@ -4,6 +4,8 @@ import argparse
 from pathlib import Path
 import re
 import shutil
+import sys
+import zipfile
 import subprocess
 import tarfile
 
@@ -57,11 +59,53 @@ Description: Resume local Codex sessions after subscription quota resets
 
 
 
+def build_discord_package(output):
+    wheel_dir = ROOT / 'build/discord-wheel'
+    wheel_dir.mkdir(parents=True, exist_ok=True)
+    run(sys.executable, '-m', 'pip', 'download', '--no-deps', '--only-binary=:all:',
+        '--dest', str(wheel_dir), 'discord.py==2.7.1')
+    wheel = next(wheel_dir.glob('discord_py-2.7.1-*.whl'))
+    staging = ROOT / 'build' / ('codex-runner-discord-' + VERSION)
+    if staging.exists():
+        shutil.rmtree(staging)
+    optional = staging / 'usr/lib/codex-runner/optional'
+    optional.mkdir(parents=True)
+    with zipfile.ZipFile(wheel) as archive:
+        archive.extractall(optional)
+    unit = staging / 'usr/lib/systemd/user/codex-runner-discord.service'
+    unit.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT/'packaging/codex-runner-discord.service', unit)
+    doc = staging/'usr/share/doc/codex-runner-discord'
+    doc.mkdir(parents=True)
+    shutil.copy2(ROOT/'LICENSE', doc/'copyright')
+    (staging/'DEBIAN').mkdir()
+    (staging/'DEBIAN/control').write_text(f"""Package: codex-runner-discord
+Version: {VERSION}
+Section: utils
+Priority: optional
+Architecture: all
+Maintainer: Codex Runner maintainers <packages@jaehyeong.com>
+Depends: codex-runner (= {VERSION}), python3-aiohttp (>= 3.7.4), python3-audioop-lts | python3 (<< 3.13)
+Homepage: {HOST}/
+Description: Optional Discord controls and notifications for Codex Runner
+ Pinned discord.py library and per-user service. Bot credentials and guild
+ configuration are private local state and are never included in this package.
+""")
+    for path in staging.rglob('*'):
+        path.chmod(0o755 if path.is_dir() else 0o644)
+    deb = output / f'codex-runner-discord_{VERSION}_all.deb'
+    run('dpkg-deb', '--root-owner-group', '-Zxz', '--build', str(staging), str(deb))
+    return deb
+
+
 def main():
     parser = argparse.ArgumentParser(description='Build Codex Runner artifacts; publication is handled by tools/package-archive')
-    parser.parse_args()
+    parser.add_argument('--with-discord', action='store_true', help='Build the optional Discord companion package')
+    args = parser.parse_args()
     output = ROOT / 'dist'; output.mkdir(parents=True, exist_ok=True)
     deb = build_package(output)
+    if args.with_discord:
+        print('Built optional companion:', build_discord_package(output))
     archive = output / f'codex-runner-{VERSION}.tar.gz'
     with tarfile.open(archive, 'w:gz') as tar:
         for name in ['src', 'packaging', 'scripts', 'tests', 'README.md', 'LICENSE', 'pyproject.toml']:
