@@ -118,6 +118,38 @@ class RemoteTests(unittest.TestCase):
         self.assertFalse(questions(self.store))
         with self.assertRaises(RunnerError):answer_question(self.store,key,{'which':'late'})
 
+    def test_replayed_unresolved_reply_requires_a_fresh_human_answer(self):
+        request=self.question()
+        key=record_question(self.store,self.job,request)
+        answer_question(self.store,key,{'which':'first answer'})
+        server=type('Server',(),{'send':lambda self,message:None})()
+        self.assertTrue(send_answer(self.store,server,questions(self.store)[0],{key}))
+        record_question(self.store,self.job,request,replay=True)
+        q=questions(self.store)[0]
+        self.assertEqual(q['status'],'pending')
+        self.assertIsNone(q['answer'])
+        self.assertFalse(send_answer(self.store,server,q,{key}))
+        answer_question(self.store,key,{'which':'confirmed again'})
+        self.assertTrue(send_answer(self.store,server,questions(self.store)[0],{key}))
+
+    def test_online_relay_keeps_native_question_and_uses_its_existing_request(self):
+        setting(self.store,'discord_questions_enabled',True)
+        setting(self.store,'discord_heartbeat',0)  # A reconnect must not interrupt the turn.
+        request=self.question();request['params']['turnId']='turn-owned'
+        original=self.fixture.event
+        seen=[]
+        def event():
+            if not seen:
+                seen.append(True);return request
+            self.assertTrue(questions(self.store))
+            self.assertTrue(self.store.get(self.job['id'])['awaiting_input'])
+            resolve_question(self.store,self.job,7)
+            return original()
+        self.fixture.server.event=event
+        self.assertEqual(self.fixture.run_job()['status'],'complete')
+        self.assertFalse(self.store.get(self.job['id'])['awaiting_input'])
+        self.assertFalse(any(m=='turn/interrupt' for m,p in self.fixture.calls))
+
     def test_secret_and_approval_requests_cannot_be_answered_over_chat(self):
         key=record_question(self.store,self.job,self.question(secret=True))
         q=questions(self.store)[0]

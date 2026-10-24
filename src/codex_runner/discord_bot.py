@@ -11,7 +11,7 @@ from discord import app_commands
 
 from .cli import RunnerError, Store
 from .discord_config import allowed, load_config
-from .discord_control import Control, notifications
+from .discord_control import Control, notifications, question_text
 from .platforms import lock_file
 from .relay import Observers
 from .remote import answer_question, can_answer, questions, setting
@@ -89,6 +89,8 @@ class QuestionView(discord.ui.View):
             q = client.question(key)
             if not q:
                 await interaction.response.send_message('이미 처리됐거나 만료된 질문이야.', ephemeral=True)
+            elif q['status'] != 'pending':
+                await interaction.response.send_message('답변 전송을 확인 중이야. 잠시 후 상태를 확인해줘.', ephemeral=True)
             elif not can_answer(q):
                 await interaction.response.send_message('이 요청은 Codex 터미널에서 확인해야 해.', ephemeral=True)
             else:
@@ -139,7 +141,7 @@ class RemoteClient(discord.Client):
                 if not result:
                     await interaction.followup.send('대기 중인 질문이 없어.', ephemeral=True)
                 for q in result[:5]:
-                    await interaction.followup.send('질문 · ' + q['request']['method'], view=QuestionView(self, q['id']), ephemeral=True, allowed_mentions=MENTIONS)
+                    await interaction.followup.send(question_text(q, session or 'Codex')[:1900], view=QuestionView(self, q['id']), ephemeral=True, allowed_mentions=MENTIONS)
                 return
             view = SessionView(self, session) if session else None
             await interaction.followup.send(result[:1900], view=view, ephemeral=True, allowed_mentions=MENTIONS)

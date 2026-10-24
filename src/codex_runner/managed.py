@@ -86,7 +86,7 @@ class ProxySocket:
 
 class LocalServer:
     """Small bounded RFC 6455 client, restricted to an owned Unix socket."""
-    def __init__(self, home):
+    def __init__(self, home, opt_out=None):
         path = Path(home) / 'app-server-control/app-server-control.sock'
         if WINDOWS:
             if not path.exists():
@@ -118,7 +118,7 @@ class LocalServer:
             if b' 101 ' not in headers.split(b'\r\n')[0] or fields.get(b'sec-websocket-accept') != expected:
                 raise RunnerError('Invalid local Codex WebSocket handshake')
             self.rpc('initialize', {'clientInfo': {'name': 'codex_runner', 'version': __version__},
-                                    'capabilities': {'experimentalApi': True}})
+                                    'capabilities': dict(experimentalApi=True, **({'optOutNotificationMethods': opt_out} if opt_out else {}))})
             self.send({'method': 'initialized', 'params': {}})
         except BaseException:
             self.close()

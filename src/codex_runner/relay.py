@@ -6,7 +6,7 @@ import time
 
 from .cli import Store
 from .managed import LocalServer
-from .remote import (RELAY_METHODS, expire_turn, questions, record_question, resolve_question, send_answer)
+from .remote import (RELAY_METHODS, expire_turn, question_key, questions, record_question, resolve_question, send_answer)
 
 
 def home_for(job):
@@ -26,7 +26,11 @@ class RuntimeObserver:
             while not self.stop.is_set():
                 server = None
                 try:
-                    server = LocalServer(self.home)
+                    server = LocalServer(self.home, opt_out=[
+                        'item/agentMessage/delta','item/reasoning/textDelta','item/reasoning/summaryTextDelta',
+                        'item/reasoning/summaryPartAdded','item/commandExecution/outputDelta',
+                        'item/fileChange/outputDelta','turn/diff/updated','item/mcpToolCall/progress',
+                        'item/started','item/completed','turn/plan/updated'])
                     self.connected(store, server)
                 except Exception as exc:
                     # Error classes only: RPC strings may contain user content.
@@ -86,7 +90,8 @@ class RuntimeObserver:
                             # A few approval request shapes omit a turn id.
                             # Never answer these automatically or mislabel them.
                             continue
-                        key = record_question(store, job, message, trusted_thread_id=sid)
+                        key = question_key(job, message)
+                        key = record_question(store, job, message, trusted_thread_id=sid, replay=key not in live_keys)
                         live_keys.add(key)
                     elif method == 'serverRequest/resolved':
                         for q in questions(store, job['id']):

@@ -116,7 +116,7 @@ def question_key(job, message):
     return hashlib.sha256(json.dumps(values).encode()).hexdigest()[:32]
 
 
-def record_question(store, job, message, trusted_thread_id=None):
+def record_question(store, job, message, trusted_thread_id=None, replay=False):
     params = message.get('params') or {}
     if ('id' not in message or params.get('threadId') != (trusted_thread_id or job['id']) or not params.get('turnId')):
         raise RunnerError('Question does not belong to the registered turn')
@@ -129,6 +129,8 @@ def record_question(store, job, message, trusted_thread_id=None):
     with store.db:
         store.db.execute('INSERT OR IGNORE INTO remote_questions VALUES (?,?,?,?,?,?,?,?,?)',
             (key, job['id'], params['turnId'], json.dumps(message['id']), json.dumps(safe), 'pending', None, now, now))
+        if replay:
+            store.db.execute("UPDATE remote_questions SET status='pending',answer=NULL,updated=? WHERE id=? AND status='submitting'", (now,key))
     refresh_question_state(store, job['id'])
     return key
 

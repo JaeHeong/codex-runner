@@ -55,6 +55,19 @@ class Control:
                 ('\n확인할 요청: ' + str(len(qs)) + '개' if qs else ''))
 
 
+def question_text(question, name='Codex'):
+    params = question['request'].get('params') or {}
+    text = name + ' · 입력 요청\n'
+    if question['request']['method'] == 'item/tool/requestUserInput':
+        for index, item in enumerate(params.get('questions') or [], 1):
+            text += '\n' + str(index) + '. ' + item.get('question', '')[:700]
+            for number, option in enumerate(item.get('options') or [], 1):
+                text += '\n  ' + str(number) + ') ' + option.get('label', '')[:150]
+    else:
+        text += '승인 또는 별도 입력이 필요해. Codex 터미널에서 확인해줘.\n' + question['request']['method']
+    return text
+
+
 def notifications(store):
     """Return candidates; callers acknowledge only after Discord accepts a send."""
     result = []
@@ -70,7 +83,8 @@ def notifications(store):
                 setting(store, 'discord:job:' + sid, '')
             continue
         key = 'discord:job:' + sid
-        identity = [job['status'], job.get('idle_turn_id'), job.get('summary'),
+        identity = [job['status'], job.get('idle_turn_id'), job.get('summary'), job.get('turns'),
+                    job.get('last_run') if job['status'] in ('blocked','error') else None,
                     detail.split('; next check')[0] if quota_wait else detail]
         fingerprint = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
         if setting(store, key) != fingerprint:
@@ -82,15 +96,7 @@ def notifications(store):
         key = 'discord:question:' + q['id']
         if setting(store, key) == 'sent':
             continue
-        params = q['request'].get('params') or {}
-        text = (jobs[q['session_id']].get('name') or q['session_id'][:12]) + ' · 입력 요청\n'
-        if q['request']['method'] == 'item/tool/requestUserInput':
-            for index, question in enumerate(params.get('questions') or [], 1):
-                text += '\n' + str(index) + '. ' + question.get('question', '')[:700]
-                for number, option in enumerate(question.get('options') or [], 1):
-                    text += '\n  ' + str(number) + ') ' + option.get('label', '')[:150]
-        else:
-            text += '승인 또는 별도 입력이 필요해. Codex 터미널에서 확인해줘.\n' + q['request']['method']
+        text = question_text(q, jobs[q['session_id']].get('name') or q['session_id'][:12])
         result.append({'key': key, 'fingerprint': 'sent', 'session_id': q['session_id'],
                        'question_id': q['id'], 'text': text})
     return result
