@@ -737,7 +737,9 @@ def cli(argv=None):
     config.add_argument('--allowed-user', action='append', default=[])
     config.add_argument('--allow-all-users', action='store_true')
     for name in ['token', 'doctor', 'invite', 'run']:
-        chat_sub.add_parser(name)
+        command = chat_sub.add_parser(name)
+        if name == 'doctor':
+            command.add_argument('--offline', action='store_true', help='Check bundled SDK without credentials or network')
     chat_service = chat_sub.add_parser('service')
     chat_service.add_argument('action', choices=['install','start','stop','status','uninstall','run'])
     service = sub.add_parser('service', help='Manage this user’s background service')

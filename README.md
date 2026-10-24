@@ -314,7 +314,7 @@ Once connected, the bot subscribes to registered managed sessions and verified
 native child agents. A live `requestUserInput` is kept intact and shown with answer
 controls. Replies go to the existing RPC request; they do not create another turn.
 A terminal answer or expired turn invalidates the buttons. Secret questions and
-permission/tool approvals require the native Codex terminal and are never accepted
+command/file/permission approval requests require the native Codex terminal and are never accepted
 automatically. After relay connection, transient Discord outages keep native
 questions intact for reconnection or a terminal answer. The menu shows `input`
 for a pending blocking question; the underlying worker keeps its turn ownership.

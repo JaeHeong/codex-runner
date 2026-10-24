@@ -49,6 +49,9 @@ def discord_cli(store, args):
     elif action == 'token':
         set_token(store.base)
         print('Token stored privately; its value was not printed.')
+    elif action == 'doctor' and getattr(args, 'offline', False):
+        import_bot()
+        print('Discord libraries OK. No credentials, chat message or network request was used.')
     elif action in ('invite', 'doctor'):
         config = load_config(store.base, require_token=True)
         app, url = application_info(config)

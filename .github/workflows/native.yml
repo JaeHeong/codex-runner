@@ -62,6 +62,7 @@ jobs:
         run: |
           ./dist/codex-runner --version
           ./dist/codex-runner --help
+          ./dist/codex-runner discord doctor --offline
       - name: Collect licenses and native artifact
         run: python scripts/package_native.py --platform ${{ matrix.artifact }}
       - uses: actions/upload-artifact@v4
