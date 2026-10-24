@@ -107,7 +107,7 @@ class RuntimeObserver:
             for q in questions(store):
                 if q['session_id'] in {j['id'] for j in owners.values()}:
                     send_answer(store, server, q, live_keys)
-            if not reconciled and now - connected_at > 3 and not getattr(server, 'pending', None):
+            if not reconciled and message is None and now - connected_at > 3 and not getattr(server, 'pending', None):
                 tracked = {j['id'] for j in owners.values()}
                 with store.db:
                     for q in questions(store):

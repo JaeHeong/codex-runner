@@ -15,7 +15,7 @@ import time
 
 from .cli import BUDGET_LIMIT_STATES, PROMPT, RunnerError, SCHEMA, child_env, private_dir
 from . import __version__
-from .platforms import WINDOWS, codex_command
+from .platforms import WINDOWS, codex_command, stop_process
 
 
 class ProxySocket:
@@ -74,11 +74,14 @@ class ProxySocket:
     def close(self):
         self.stopping.set()
         if self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                self.proc.kill(); self.proc.wait(timeout=3)
+            if WINDOWS:
+                stop_process(self.proc)  # Proxy descendants only; never the shared server.
+            else:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill(); self.proc.wait(timeout=3)
         self.reader.join(timeout=2)
         self.proc.stdin.close()
         self.proc.stdout.close()

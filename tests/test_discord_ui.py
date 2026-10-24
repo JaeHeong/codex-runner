@@ -37,6 +37,19 @@ class DiscordUITests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(all(len(b.custom_id)<=100 for b in view.children))
                 self.assertTrue(QuestionView(client,'a'*32).is_persistent())
 
+    async def test_global_status_omits_null_view_rejected_by_discord_webhooks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config={'guild_id':123456789012345678,'channel_id':234567890123456789,
+                    'allowed_users':[],'allow_all_users':True,'token':'not-a-real-token'}
+            client=RemoteClient(Path(directory),config)
+            interaction=type('Interaction',(),{'guild_id':config['guild_id'],'channel_id':config['channel_id'],
+                'id':1234,'user':type('User',(),{'id':123})(), 'response':AsyncMock(), 'followup':AsyncMock()})()
+            async with client:
+                with patch.object(client.control,'execute',return_value='all sessions'):
+                    await client.execute(interaction,'status')
+                self.assertEqual(interaction.followup.send.await_args.args[0],'all sessions')
+                self.assertNotIn('view',interaction.followup.send.await_args.kwargs)
+
     async def test_foreign_channel_cannot_submit_a_command_or_open_a_modal(self):
         with tempfile.TemporaryDirectory() as directory:
             config={'guild_id':123456789012345678,'channel_id':234567890123456789,

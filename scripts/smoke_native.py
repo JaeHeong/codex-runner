@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import time
 from codex_runner.cli import resolve_codex
-from codex_runner.platforms import codex_command
+from codex_runner.platforms import codex_command, stop_process
 from codex_runner.managed import LocalServer
 
 with tempfile.TemporaryDirectory(prefix='cr-', dir=os.environ.get('CODEX_RUNNER_TEST_TMP')) as directory:
@@ -38,6 +38,6 @@ with tempfile.TemporaryDirectory(prefix='cr-', dir=os.environ.get('CODEX_RUNNER_
             server.close()
     finally:
         if owned:
-            owned.terminate(); owned.wait(timeout=15)
+            stop_process(owned)  # Include the test server’s own code-host children.
         else:
             subprocess.run(command + ['stop'], env=env, timeout=60, check=False)

@@ -54,6 +54,7 @@ class AnswerModal(discord.ui.Modal, title='Codex 질문에 답하기'):
             answers[question['id']] = text
         try:
             await asyncio.to_thread(self.client.answer, self.question['id'], answers)
+            print('Discord question answered:', self.question['id'], 'actor:', interaction.user.id, flush=True)
             await interaction.followup.send('답변을 접수했어. 현재 질문이 유효한지 확인한 뒤 Codex에 전달할게.', ephemeral=True, allowed_mentions=MENTIONS)
         except RunnerError as exc:
             await interaction.followup.send(str(exc)[:1800], ephemeral=True, allowed_mentions=MENTIONS)
@@ -134,6 +135,7 @@ class RemoteClient(discord.Client):
         if not await self.authorize(interaction):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
+        print('Discord command:', action, 'actor:', interaction.user.id, 'session:', session or 'all', flush=True)
         identity = 'discord:' + str(interaction.user.id) + ':' + str(interaction.id)
         try:
             result = await asyncio.to_thread(self.control.execute, action, session, text, identity)
@@ -143,13 +145,13 @@ class RemoteClient(discord.Client):
                 for q in result[:5]:
                     await interaction.followup.send(question_text(q, session or 'Codex')[:1900], view=QuestionView(self, q['id']), ephemeral=True, allowed_mentions=MENTIONS)
                 return
-            view = SessionView(self, session) if session else None
-            await interaction.followup.send(result[:1900], view=view, ephemeral=True, allowed_mentions=MENTIONS)
+            options = {'view': SessionView(self, session)} if session else {}
+            await interaction.followup.send(result[:1900], ephemeral=True, allowed_mentions=MENTIONS, **options)
         except RunnerError as exc:
             # A blocked resume explains its reason and offers an explicit new
             # instruction. It never silently forces a completed/blocked turn.
-            await interaction.followup.send(str(exc)[:1800], view=SessionView(self, session) if session else None,
-                                             ephemeral=True, allowed_mentions=MENTIONS)
+            options = {'view': SessionView(self, session)} if session else {}
+            await interaction.followup.send(str(exc)[:1800], ephemeral=True, allowed_mentions=MENTIONS, **options)
         except Exception as exc:
             await interaction.followup.send('처리 중 오류: ' + type(exc).__name__ + '. 서버 로그를 확인해줘.', ephemeral=True)
 
