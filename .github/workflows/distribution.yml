@@ -13,7 +13,13 @@ jobs:
           $script = Join-Path $env:RUNNER_TEMP 'install-codex-runner.ps1'
           Invoke-WebRequest 'https://packages.jaehyeong.com/winget/install.ps1' -OutFile $script
           $env:CODEX_RUNNER_STATE_DIR = Join-Path $env:RUNNER_TEMP 'codex-runner-empty-state'
-          & $script -NoService
+          function Install-Runner([switch]$NoService) {
+            $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script)
+            if ($NoService) { $arguments += '-NoService' }
+            & powershell.exe @arguments
+            if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell installer failed' }
+          }
+          Install-Runner -NoService
           $binary = Join-Path $env:LOCALAPPDATA 'Programs\CodexRunner\codex-runner.exe'
           $version = & $binary --version
           if ($LASTEXITCODE -ne 0 -or $version -notmatch '^\d+\.\d+\.\d+$') { throw 'Native version check failed' }
@@ -40,11 +46,11 @@ jobs:
             $xml.Save($xmlPath)
             & schtasks /Create /TN $name /XML $xmlPath /F
             if ($LASTEXITCODE -ne 0) { throw 'Legacy task fixture failed' }
-            & $script -NoService
+            Install-Runner -NoService
             Wait-Worker $false
             [xml]$newXml = Get-Content $xmlPath -Raw
             if ($newXml.Task.Actions.Exec.Command -notlike '*codex-runner-background.exe') { throw 'Legacy task was not migrated' }
-            & $script
+            Install-Runner
             Wait-Worker $true
             if ((Get-Content (Join-Path $env:CODEX_RUNNER_STATE_DIR 'preserve.txt')) -ne 'keep registration data') { throw 'Upgrade lost state' }
             Write-Host "Verified published $version, legacy task migration, file-only upgrade and worker restart"
