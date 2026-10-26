@@ -108,9 +108,19 @@ class ExecutionTests(unittest.TestCase):
 
     def test_network_option_requires_workspace_write(self):
         from codex_runner.cli import cli
-        with self.assertRaisesRegex(RunnerError, 'workspace-write'):
-            cli(['--state-dir', str(self.base / 'other'), 'add', str(uuid.uuid4()), '--cwd', str(self.base),
-                 '--sandbox', 'read-only', '--network', '--codex', str(FAKE)])
+        opened = []
+        def store(path):
+            opened.append(Store(path))
+            return opened[-1]
+        try:
+            with patch('codex_runner.cli.Store', side_effect=store), self.assertRaisesRegex(RunnerError, 'workspace-write'):
+                cli(['--state-dir', str(self.base / 'other'), 'add', str(uuid.uuid4()), '--cwd', str(self.base),
+                     '--sandbox', 'read-only', '--network', '--codex', str(FAKE)])
+        finally:
+            # Windows cannot remove the temporary directory while SQLite holds it open.
+            for item in opened:
+                item.db.close()
+        self.assertEqual(len(opened), 1)
 
     def test_exhausted_quota_makes_no_model_call(self):
         self.configure(used=100, reset=time.time() + 200)
