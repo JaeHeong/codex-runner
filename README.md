@@ -575,8 +575,11 @@ tmux new -s codex-runner 'codex-runner daemon'
   Unknown reset times are polled too; unrecognized limit-state values stop for review.
 - In managed mode, a structured `usageLimitExceeded` turn failure also schedules a
   five-minute recheck if the quota endpoint has not yet reflected the restriction.
-  A `serverOverloaded` failure (model at capacity) is retried after 5 minutes,
-  doubling to at most 30 minutes, and the backoff resets after a completed turn.
+- A model capacity failure is retried with the same model after 5 minutes,
+  doubling to at most 30 minutes; the backoff resets after a completed turn.
+  Managed mode recognizes the structured `serverOverloaded` code. CLI mode has only
+  the `codex exec --json` message, so it matches Codex's fixed "Selected model is at
+  capacity" text.
 - Quota RPC, authentication, configuration and ordinary execution failures become
   `error`, preserving logs; resolve the issue and explicitly `resume` the registration.
   Confirmed subscription, workspace, and structured usage-limit failures wait as

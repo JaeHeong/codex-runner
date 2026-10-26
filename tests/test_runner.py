@@ -150,6 +150,24 @@ class ExecutionTests(unittest.TestCase):
         Worker(self.store).run(self.job)
         self.assertEqual(self.store.get(self.job['id'])['status'], 'error')
 
+    def test_model_overload_waits_with_backoff_then_resumes(self):
+        self.configure(mode='overloaded')
+        before = time.time()
+        Worker(self.store).run(self.job)
+        job = self.store.get(self.job['id'])
+        self.assertEqual(job['status'], 'waiting')
+        self.assertIn('serverOverloaded', job['detail'])
+        self.assertAlmostEqual(job['next_run'] - before, 300, delta=5)
+        Worker(self.store).run(job)
+        self.assertAlmostEqual(self.store.get(job['id'])['next_run'] - before, 600, delta=5)
+        self.configure()
+        Worker(self.store).run(self.store.get(job['id']))
+        job = self.store.get(job['id'])
+        self.assertEqual(job['status'], 'complete')
+        self.assertEqual(job['overload_retries'], 0)
+        calls = [json.loads(s) for s in self.fixture.with_suffix('.calls').read_text().splitlines()]
+        self.assertEqual([c[-2] for c in calls], [job['id']] * 3)
+
     def test_api_key_mode_does_not_fallback_to_billed_execution(self):
         self.configure(auth_type='apiKey')
         Worker(self.store).run(self.job)

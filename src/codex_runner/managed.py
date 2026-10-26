@@ -501,10 +501,7 @@ def run_managed(worker, job):
                 worker.wait_reasons[sid] = 'Codex reported usageLimitExceeded; rechecking account availability'
                 when = time.time() + 300
             elif not when and info in TRANSIENT_ERRORS:
-                retries = store.get(sid).get('overload_retries', 0)
-                store.patch(sid, overload_retries=retries + 1)
-                worker.wait_reasons[sid] = 'Codex reported ' + info + '; retrying'
-                when = time.time() + min(300 * 2 ** retries, 1800)
+                when = worker.overload_wait(job, info)
             if when:
                 worker.schedule_wait(job, when)
                 return
@@ -526,6 +523,6 @@ def run_managed(worker, job):
         # Record the finished parent once and release its turn ownership. Future
         # preflight polls observe linked children before any new continuation.
         worker.finish(job, result, waiting_for=children[1] if children else None)
-        store.patch(sid, managed_turn_id=None, overload_retries=0)
+        store.patch(sid, managed_turn_id=None)
     finally:
         server.close()

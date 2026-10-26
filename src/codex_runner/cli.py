@@ -38,6 +38,8 @@ BUDGET_LIMIT_STATES = {
     'workspace_owner_usage_limit_reached', 'workspace_member_usage_limit_reached',
 }
 PROMPT = '이전에 하던 작업 이어서 해줘'
+# `codex exec --json` reports a model capacity failure only as this fixed message.
+OVERLOAD_MESSAGE = 'Selected model is at capacity'
 
 
 class RunnerError(Exception):
@@ -386,6 +388,13 @@ class Worker:
             self.wait_reasons[job['id']] = 'Subscription quota unavailable'
         return retry_at(snapshot)
 
+    def overload_wait(self, job, info):
+        # Same model, growing delay: 5, 10, 20, then every 30 minutes until a turn completes.
+        retries = self.store.get(job['id']).get('overload_retries', 0)
+        self.store.patch(job['id'], overload_retries=retries + 1)
+        self.wait_reasons[job['id']] = 'Codex reported ' + info + '; retrying'
+        return time.time() + min(300 * 2 ** retries, 1800)
+
     def schedule_wait(self, job, when):
         reason = self.wait_reasons.get(job['id'], 'Subscription quota unavailable')
         self.store.patch(job['id'], expected=['running'], status='waiting', next_run=when,
@@ -406,7 +415,7 @@ class Worker:
         if waiting_for and status in ('queued', 'complete'):
             status, detail = 'waiting', waiting_for
         self.store.patch(job['id'], expected=['running'], wake_for_input=True, status=status, summary=summary,
-                         same_summary_count=repeats, detail=detail, next_run=time.time() + (15 if status == 'waiting' else 2),
+                         same_summary_count=repeats, detail=detail, overload_retries=0, next_run=time.time() + (15 if status == 'waiting' else 2),
                          turns=current.get('turns', 0) + 1, pid=None, managed_turn_id=None)
         self.note(job, status + ': ' + detail)
 
@@ -459,20 +468,17 @@ class Worker:
             if self.stopping.is_set():
                 self.store.patch(job['id'], expected=['running'], status='queued', detail='Daemon stopped; will resume on restart')
                 return
-            if proc.returncode:
-                when = self.capacity(job, refresh=True)
-                if when:
-                    self.schedule_wait(job, when)
-                    return
-                raise RunnerError('Codex exited with code ' + str(proc.returncode) + '; inspect logs before resuming')
             # A child must resume the requested thread, not silently create another one.
             terminal = None
             saw_thread = False
+            overloaded = False
             with logfile.open(encoding='utf-8') as stream:
                 for line in stream:
                     try:
                         event = json.loads(line)
                     except ValueError:
+                        continue
+                    if not isinstance(event, dict):
                         continue
                     if event.get('type') == 'thread.started':
                         if event.get('thread_id') != job['id']:
@@ -480,6 +486,18 @@ class Worker:
                         saw_thread = True
                     if event.get('type') in ('turn.failed', 'turn.completed'):
                         terminal = event['type']
+                    if event.get('type') in ('turn.failed', 'error'):
+                        message = event.get('message') or (event.get('error') or {}).get('message') or ''
+                        overloaded = overloaded or OVERLOAD_MESSAGE in message
+            if proc.returncode or terminal == 'turn.failed':
+                when = self.capacity(job, refresh=True)
+                if not when and overloaded:
+                    when = self.overload_wait(job, 'serverOverloaded')
+                if when:
+                    self.schedule_wait(job, when)
+                    return
+            if proc.returncode:
+                raise RunnerError('Codex exited with code ' + str(proc.returncode) + '; inspect logs before resuming')
             if not saw_thread or terminal != 'turn.completed':
                 raise RunnerError('Codex did not confirm a completed turn on the requested thread; inspect logs')
             self.finish(job, json.loads(output.read_text(encoding='utf-8')))

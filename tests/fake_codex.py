@@ -55,6 +55,10 @@ else:
         state.write_text(json.dumps(data))
         print(json.dumps({'type': 'turn.failed', 'error': {'message': 'Your workspace is out of credits'}}))
         sys.exit(1)
+    if data.get('mode') == 'overloaded':
+        print(json.dumps({'type': 'thread.started', 'thread_id': sys.argv[-2]}))
+        print(json.dumps({'type': 'turn.failed', 'error': {'message': 'Selected model is at capacity. Please try a different model.'}}))
+        sys.exit(1)
     if data.get('mode') == 'error':
         sys.exit(1)
     if data.get('mode') == 'sleep':
