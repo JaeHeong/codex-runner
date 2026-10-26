@@ -16,6 +16,8 @@ staging = root / 'native-dist' / name
 staging.mkdir(parents=True, exist_ok=True)
 exe = 'codex-runner.exe' if sys.platform == 'win32' else 'codex-runner'
 shutil.copy2(root / 'dist' / exe, staging / exe)
+if sys.platform == 'win32':
+    shutil.copy2(root / 'dist/codex-runner-background.exe', staging / 'codex-runner-background.exe')
 for filename in ['README.md', 'LICENSE']:
     shutil.copy2(root / filename, staging / filename)
 notices = staging / 'licenses'; notices.mkdir(exist_ok=True)

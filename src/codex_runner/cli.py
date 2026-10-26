@@ -17,7 +17,7 @@ import time
 import uuid
 
 from . import __version__
-from .platforms import (WINDOWS, child_options, codex_command, default_state_dir,
+from .platforms import (WINDOWS, child_options, codex_command, default_state_dir, no_console_options,
                         lock_file, process_alive, stop_process)
 
 if __name__ == '__main__':
@@ -311,7 +311,7 @@ def resolve_codex(value=None):
 
 def probe_codex(job):
     proc = subprocess.run(codex_command(job['codex'], 'exec', 'resume', '--help'), capture_output=True,
-                          text=True, encoding='utf-8', env=child_env(job), timeout=20)
+                          text=True, encoding='utf-8', env=child_env(job), timeout=20, **no_console_options())
     if proc.returncode or any(flag not in proc.stdout for flag in ('--json', '--output-schema', '--output-last-message')):
         raise RunnerError('Codex CLI must support exec resume with JSON and output-schema (tested: 0.163.0)')
 
@@ -742,8 +742,10 @@ def cli(argv=None):
             command.add_argument('--offline', action='store_true', help='Check bundled SDK without credentials or network')
     chat_service = chat_sub.add_parser('service')
     chat_service.add_argument('action', choices=['install','start','stop','status','uninstall','run'])
+    chat_service.add_argument('--no-start', action='store_true', help='Register the service without starting it (install only)')
     service = sub.add_parser('service', help='Manage this user’s background service')
     service.add_argument('action', choices=['install', 'start', 'stop', 'status', 'uninstall', 'run'])
+    service.add_argument('--no-start', action='store_true', help='Register the service without starting it (install only)')
     for name in ['limits', 'doctor']:
         p = sub.add_parser(name); p.add_argument('--codex'); p.add_argument('--limit-id', default='codex')
     args = parser.parse_args(argv)
@@ -823,7 +825,7 @@ def cli(argv=None):
         discord_cli(store, args)
     elif args.command == 'service':
         from .service import manage_service
-        manage_service(store, args.action)
+        manage_service(store, args.action, start=not args.no_start)
     elif args.command == 'daemon':
         daemon(store, args.once, args.max_parallel)
     store.db.close()

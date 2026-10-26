@@ -5,7 +5,7 @@ The CLI registers sessions in a private per-user queue; a per-user background se
 manages multiple sessions independently, with up to four concurrent workers by
 default. No model call is made while waiting.
 
-Version: **0.8.0**. Tested with **Codex CLI 0.163.0**. Linux packages require
+Version: **0.8.1**. Tested with **Codex CLI 0.163.0**. Linux packages require
 Python 3.10+ and APT 2.4+ for inline-key repository configuration. The Debian
 package is architecture independent; the repository advertises amd64 and arm64.
 Ubuntu 22.04+ and Debian 12+ meet these runtime requirements. Windows and macOS
@@ -217,6 +217,27 @@ installer that verifies the catalog hash, adds the user PATH and registers the
 background service. A WinGet manifest is provided under `/winget/`;
 public `winget install` availability depends on the community repository accepting
 it. The archive URL is a download host, not a WinGet source server.
+
+Since 0.8.1, Windows scheduled tasks use the bundled
+`codex-runner-background.exe` GUI launcher. Login-time Runner/Discord services and
+their metadata/proxy children allocate no console; the normal `codex-runner`
+command still opens the terminal menu. Keep both executables together; the lone
+`.exe` download supports interactive CLI use, while service installation requires
+the complete ZIP (or a Python installation with `pythonw.exe`).
+
+To upgrade a previous console-based installation, close the Runner menu and rerun:
+
+```powershell
+Invoke-WebRequest https://packages.jaehyeong.com/winget/install.ps1 -OutFile install-codex-runner.ps1
+powershell -ExecutionPolicy Bypass -File .\install-codex-runner.ps1
+```
+
+The installer gracefully stops installed Runner/Discord workers, waits for their
+files to unlock, updates both files and refreshes existing task definitions.
+`-NoService` leaves workers stopped and refreshes only tasks already registered;
+a fresh file-only installation creates no task. `service install --no-start`
+registers the login task without starting it immediately. Login, rather than
+machine boot before login, remains the automatic startup trigger.
 
 `codex-runner service install|start|stop|status|uninstall` uses a per-user systemd
 unit on Linux, a LaunchAgent on macOS, and an interactive-user scheduled task on
@@ -605,7 +626,7 @@ Package removal leaves your private state and Codex sessions intact.
 
 ## Development and releases
 
-Source archive: https://packages.jaehyeong.com/projects/codex-runner/0.8.0/codex-runner-0.8.0.tar.gz
+Source archive: https://packages.jaehyeong.com/projects/codex-runner/0.8.1/codex-runner-0.8.1.tar.gz
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests -v

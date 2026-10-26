@@ -78,6 +78,8 @@ NestedInstallerType: portable
 NestedInstallerFiles:
 - RelativeFilePath: codex-runner.exe
   PortableCommandAlias: codex-runner
+- RelativeFilePath: codex-runner-background.exe
+  PortableCommandAlias: codex-runner-background
 Scope: user
 UpgradeBehavior: uninstallPrevious
 Installers:

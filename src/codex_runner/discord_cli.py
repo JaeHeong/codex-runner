@@ -66,7 +66,7 @@ def discord_cli(store, args):
         import_bot().run_bot(store)
     elif action == 'service':
         from .service import manage_service
-        manage_service(store, args.action, component='discord')
+        manage_service(store, args.action, component='discord', start=not args.no_start)
         if args.action == 'uninstall':
             from .remote import setting
             setting(store, 'discord_questions_enabled', False)

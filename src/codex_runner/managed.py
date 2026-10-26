@@ -15,7 +15,7 @@ import time
 
 from .cli import BUDGET_LIMIT_STATES, PROMPT, RunnerError, SCHEMA, child_env, private_dir
 from . import __version__
-from .platforms import WINDOWS, codex_command, stop_process
+from .platforms import WINDOWS, codex_command, stop_process, no_console_options
 
 
 class ProxySocket:
@@ -26,7 +26,7 @@ class ProxySocket:
         executable = str(native) if native.is_file() else resolve_codex()
         self.proc = subprocess.Popen(codex_command(executable, 'app-server', 'proxy', '--sock', str(path)),
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.DEVNULL, bufsize=0)
+                                     stderr=subprocess.DEVNULL, bufsize=0, **no_console_options())
         self.timeout = 15
         self.data = queue.Queue(maxsize=256)
         self.stopping = threading.Event()
@@ -387,7 +387,7 @@ def run_managed(worker, job):
             if worker.stopping.is_set():
                 return
             started = subprocess.run(codex_command(job['codex'], 'app-server', 'daemon', 'start'),
-                                     env=child_env(job), capture_output=True, timeout=45)
+                                     env=child_env(job), capture_output=True, timeout=45, **no_console_options())
             if started.returncode:
                 reason = (started.stderr or b'').decode('utf-8', errors='replace')
                 if WINDOWS and any(text in reason for text in (

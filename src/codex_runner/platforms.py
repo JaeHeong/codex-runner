@@ -65,8 +65,13 @@ def process_alive(pid):
         return True
 
 
+def no_console_options():
+    # Applies to both GUI service parents and interactive metadata commands.
+    return {'creationflags': 0x08000000} if WINDOWS else {}  # CREATE_NO_WINDOW
+
+
 def child_options():
-    return {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {'start_new_session': True}
+    return {'creationflags': 0x00000200 | 0x08000000} if WINDOWS else {'start_new_session': True}
 
 
 def stop_process(proc):
@@ -75,7 +80,7 @@ def stop_process(proc):
     if WINDOWS:
         # Only the subprocess created by Runner, never the shared Codex daemon.
         subprocess.run(['taskkill', '/PID', str(proc.pid), '/T', '/F'],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15, **no_console_options())
         proc.wait(timeout=10)
         return
     with contextlib.suppress(ProcessLookupError):

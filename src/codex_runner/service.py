@@ -12,7 +12,7 @@ import time
 import xml.etree.ElementTree as ET
 
 from .cli import RunnerError, daemon
-from .platforms import WINDOWS, process_alive
+from .platforms import WINDOWS, process_alive, no_console_options
 
 
 def command(base, action='daemon'):
@@ -49,15 +49,28 @@ def windows_definition(base, user, component='runner'):
     ET.SubElement(retry, 'Interval').text = 'PT1M'
     ET.SubElement(retry, 'Count').text = '3'
     action = ET.SubElement(ET.SubElement(root, 'Actions', Context='Author'), 'Exec')
-    args = command(base, 'discord service run' if component == 'discord' else 'service run')
+    args = windows_command(base, component)
     ET.SubElement(action, 'Command').text = args[0]
     ET.SubElement(action, 'Arguments').text = subprocess.list2cmdline(args[1:])
     ET.SubElement(action, 'WorkingDirectory').text = str(base)
     return ET.tostring(root, encoding='utf-16', xml_declaration=True)
 
 
+def windows_command(base, component='runner'):
+    action = 'discord service run' if component == 'discord' else 'service run'
+    if getattr(sys, 'frozen', False):
+        launcher = Path(sys.executable).with_name('codex-runner-background.exe')
+        if not launcher.is_file():
+            raise RunnerError('Windowless service launcher is missing; extract the full Windows ZIP beside codex-runner.exe or use the PowerShell installer')
+        return [str(launcher), '--state-dir', str(base), *action.split()]
+    pythonw = Path(sys.executable).with_name('pythonw.exe')
+    if not pythonw.is_file():
+        raise RunnerError('pythonw.exe is required for the Windows background service; use a full Python installation or the native Windows ZIP')
+    return [str(pythonw), '-m', 'codex_runner.windows_background', '--state-dir', str(base), *action.split()]
+
+
 def run(*args, check=True):
-    return subprocess.run(args, check=check)
+    return subprocess.run(args, check=check, **no_console_options())
 
 
 def graceful_stop(base, component='runner'):
@@ -75,8 +88,10 @@ def graceful_stop(base, component='runner'):
         raise RunnerError('Runner is still stopping; no Codex process was forcibly terminated')
 
 
-def manage_service(store, action, component='runner'):
+def manage_service(store, action, component='runner', start=True):
     base = store.base
+    if not start and action != 'install':
+        raise RunnerError('--no-start is only valid for service install')
     if action == 'run':
         with (base / ('discord-service.log' if component == 'discord' else 'service.log')).open('a', encoding='utf-8', buffering=1) as log:
             with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
@@ -91,12 +106,13 @@ def manage_service(store, action, component='runner'):
     if WINDOWS:
         task = ('CodexRunnerDiscord-' if component == 'discord' else 'CodexRunner-') + hashlib.sha256(str(base).encode()).hexdigest()[:10]
         if action == 'install':
-            identity = subprocess.check_output(['whoami', '/user', '/fo', 'csv', '/nh'], text=True)
+            identity = subprocess.check_output(['whoami', '/user', '/fo', 'csv', '/nh'], text=True, **no_console_options())
             user = next(csv.reader(identity.splitlines()))[1]
             path = base / ('discord-service-task.xml' if component == 'discord' else 'service-task.xml')
             path.write_bytes(windows_definition(base, user, component))
             run('schtasks', '/Create', '/TN', task, '/XML', str(path), '/F')
-            run('schtasks', '/Run', '/TN', task)
+            if start:
+                run('schtasks', '/Run', '/TN', task)
         elif action == 'start':
             run('schtasks', '/Run', '/TN', task)
         elif action == 'status':
@@ -113,7 +129,7 @@ def manage_service(store, action, component='runner'):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(plistlib.dumps(launchd_definition(base, label, component)))
             path.chmod(0o600)
-            if subprocess.run(['launchctl', 'print', target + '/' + label],
+            if start and subprocess.run(['launchctl', 'print', target + '/' + label],
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
                 run('launchctl', 'bootstrap', target, str(path))
         elif action == 'start':
@@ -141,7 +157,7 @@ def manage_service(store, action, component='runner'):
                         '\nRestart=on-failure\nRestartSec=15\nTimeoutStopSec=45\nKillMode=process\nUMask=0077\n'
                         '[Install]\nWantedBy=default.target\n', encoding='utf-8')
         run('systemctl', '--user', 'daemon-reload')
-        run('systemctl', '--user', 'enable', '--now', unit)
+        run('systemctl', '--user', 'enable', *(['--now'] if start else []), unit)
     elif action == 'uninstall':
         run('systemctl', '--user', 'disable', '--now', unit)
         (Path.home() / '.config/systemd/user' / unit).unlink(missing_ok=True)

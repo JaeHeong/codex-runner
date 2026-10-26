@@ -71,6 +71,14 @@ jobs:
           ./dist/codex-runner --version
           ./dist/codex-runner --help
           ./dist/codex-runner discord doctor --offline
+      - name: Build and test windowless Windows service
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call scripts\build_windows_launcher.cmd
+          if errorlevel 1 exit /b %errorlevel%
+          python scripts\smoke_windows_service.py
+          if errorlevel 1 exit /b %errorlevel%
       - name: Collect licenses and native artifact
         run: python scripts/package_native.py --platform ${{ matrix.artifact }}
       - uses: actions/upload-artifact@v4
