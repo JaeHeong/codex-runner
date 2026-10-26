@@ -9,13 +9,45 @@ jobs:
       - name: Download and run the published user installer
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $script = Join-Path $env:RUNNER_TEMP 'install-codex-runner.ps1'
           Invoke-WebRequest 'https://packages.jaehyeong.com/winget/install.ps1' -OutFile $script
-          & $script -NoService
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $binary = Join-Path $env:LOCALAPPDATA 'Programs\CodexRunner\codex-runner.exe'
-          & $binary --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:CODEX_RUNNER_STATE_DIR = Join-Path $env:RUNNER_TEMP 'codex-runner-empty-state'
-          & $binary status --json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $script -NoService
+          $binary = Join-Path $env:LOCALAPPDATA 'Programs\CodexRunner\codex-runner.exe'
+          $version = & $binary --version
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^\d+\.\d+\.\d+$') { throw 'Native version check failed' }
+          $jobs = & $binary status --json
+          if ($LASTEXITCODE -ne 0 -or ($jobs | ConvertFrom-Json).Count -ne 0) { throw 'Empty state check failed' }
+          function Wait-Worker([bool]$running) {
+            $deadline = [DateTime]::UtcNow.AddSeconds(60)
+            $pidFile = Join-Path $env:CODEX_RUNNER_STATE_DIR 'daemon.pid'
+            while ((Test-Path $pidFile) -ne $running) {
+              if ([DateTime]::UtcNow -ge $deadline) { throw 'Worker state did not change' }
+              Start-Sleep -Milliseconds 200
+            }
+          }
+          try {
+            & $binary service install
+            if ($LASTEXITCODE -ne 0) { throw 'Initial service install failed' }
+            Wait-Worker $true
+            Set-Content (Join-Path $env:CODEX_RUNNER_STATE_DIR 'preserve.txt') 'keep registration data'
+            # Replace the task action with the legacy console entry, then upgrade.
+            $xmlPath = Join-Path $env:CODEX_RUNNER_STATE_DIR 'service-task.xml'
+            [xml]$xml = Get-Content $xmlPath -Raw
+            $name = 'CodexRunner-' + ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($env:CODEX_RUNNER_STATE_DIR)))).Substring(0,10).ToLower()
+            $xml.Task.Actions.Exec.Command = $binary
+            $xml.Save($xmlPath)
+            & schtasks /Create /TN $name /XML $xmlPath /F
+            if ($LASTEXITCODE -ne 0) { throw 'Legacy task fixture failed' }
+            & $script -NoService
+            Wait-Worker $false
+            [xml]$newXml = Get-Content $xmlPath -Raw
+            if ($newXml.Task.Actions.Exec.Command -notlike '*codex-runner-background.exe') { throw 'Legacy task was not migrated' }
+            & $script
+            Wait-Worker $true
+            if ((Get-Content (Join-Path $env:CODEX_RUNNER_STATE_DIR 'preserve.txt')) -ne 'keep registration data') { throw 'Upgrade lost state' }
+            Write-Host "Verified published $version, legacy task migration, file-only upgrade and worker restart"
+          } finally {
+            & $binary service uninstall
+          }
