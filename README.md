@@ -658,7 +658,11 @@ background quota refresh, cache freshness, and separate runtime/account caches.
 `scripts/build_release.py` builds the `.deb` with root-normalized ownership and a
 source archive. Bump the version before building a new release; published release
 files are immutable. Register the artifacts and publish them with the shared
-`tools/package-archive/archive.py` tool described in that directory's README.
+[JaeHeong/my-packages-repository](https://github.com/JaeHeong/my-packages-repository)
+publisher (`python3 archive.py` from its checkout, or `jaehyeong-archive` on the
+current publisher host). Its README explains registering other applications and
+transferring built artifacts to the publisher; Git push runs checks separately
+from the signing/publication step.
 It generates all projects' APT indexes and GPG signatures together, so releasing
 Codex Runner cannot overwrite another project's repository metadata or website.
 APT compatibility depends on the actual Python/Codex requirements, not merely the

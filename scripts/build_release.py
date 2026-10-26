@@ -99,7 +99,7 @@ Description: Optional Discord controls and notifications for Codex Runner
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Build Codex Runner artifacts; publication is handled by tools/package-archive')
+    parser = argparse.ArgumentParser(description='Build Codex Runner artifacts; publication is handled by JaeHeong/my-packages-repository')
     parser.add_argument('--with-discord', action='store_true', help='Build the optional Discord companion package')
     args = parser.parse_args()
     output = ROOT / 'dist'; output.mkdir(parents=True, exist_ok=True)
@@ -112,7 +112,7 @@ def main():
             tar.add(ROOT / name, arcname='codex-runner-' + VERSION + '/' + name,
                     filter=lambda x: None if '__pycache__' in x.name or '.egg-info' in x.name or x.name.endswith('.pyc') else x)
     print('Built:', deb, archive)
-    print('Add these artifacts with tools/package-archive/archive.py, then publish the shared archive.')
+    print('Register these artifacts with jaehyeong-archive (JaeHeong/my-packages-repository), then publish the shared archive.')
 
 
 if __name__ == '__main__':
