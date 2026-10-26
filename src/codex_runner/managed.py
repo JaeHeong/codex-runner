@@ -204,7 +204,9 @@ def sandbox_policy(job):
         return {'type': 'dangerFullAccess'}
     if job['sandbox'] == 'read-only':
         return {'type': 'readOnly', 'networkAccess': False}
-    return {'type': 'workspaceWrite', 'writableRoots': [job['cwd']], 'networkAccess': bool(job.get('network'))}
+    # Codex protects .git inside a writable root; listing it as its own root allows commits.
+    roots = [job['cwd']] + ([str(Path(job['cwd']) / '.git')] if job.get('git_write') else [])
+    return {'type': 'workspaceWrite', 'writableRoots': roots, 'networkAccess': bool(job.get('network'))}
 
 
 def find_turn(server, sid, tid):

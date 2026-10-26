@@ -462,7 +462,9 @@ An existing registration must first be paused, removed, and re-added to change i
 mode. The default sandbox remains `workspace-write`; `--sandbox danger-full-access`
 explicitly enables Full Access. `--network` keeps `workspace-write` file limits but
 allows network access, for example a task that drives a separately opened browser
-through its local debugging port. The task file is read at registration, not watched
+through its local debugging port. `--git-write` also makes the project's `.git`
+writable, which Codex otherwise protects inside `workspace-write`, so the task can
+commit; pushing over SSH additionally needs `--network`. The task file is read at registration, not watched
 for later edits. Its contents are appended to the normal continuation instructions.
 
 The terminal may be detached or closed while managed work runs. Reconnect with
@@ -601,8 +603,9 @@ Run the runner as your existing Codex login user, not root. Default execution us
 terminal approval. Operations requiring additional permission can fail and must
 be reviewed through the normal workflow. `add --sandbox read-only` is available
 for review work; `danger-full-access` is an explicit opt-in for environments where
-that authority is intended. `add --network` enables network access within
-`workspace-write` only. There is no default sandbox bypass.
+that authority is intended. `add --network` enables network access and
+`add --git-write` enables `.git` writes, both within `workspace-write` only.
+There is no default sandbox bypass.
 
 In default CLI mode, do not attach an interactive client while the runner owns the
 session. In `--managed` mode, an interactive client may observe it but should not

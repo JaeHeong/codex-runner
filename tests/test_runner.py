@@ -106,21 +106,28 @@ class ExecutionTests(unittest.TestCase):
         self.assertNotIn('sandbox_workspace_write.network_access=true',
                          build_command(dict(self.job, network=True, sandbox='read-only'), 'schema.json', 'out.json'))
 
-    def test_network_option_requires_workspace_write(self):
+    def test_git_write_option_adds_git_writable_root(self):
+        cmd = build_command(dict(self.job, git_write=True), 'schema.json', 'out.json')
+        roots = [v for v in cmd if v.startswith('sandbox_workspace_write.writable_roots=')]
+        self.assertEqual(roots, ['sandbox_workspace_write.writable_roots=' + json.dumps([str(self.base / '.git')])])
+        self.assertEqual(cmd[cmd.index(roots[0]) - 1], '-c')
+
+    def test_network_and_git_write_options_require_workspace_write(self):
         from codex_runner.cli import cli
-        opened = []
-        def store(path):
-            opened.append(Store(path))
-            return opened[-1]
-        try:
-            with patch('codex_runner.cli.Store', side_effect=store), self.assertRaisesRegex(RunnerError, 'workspace-write'):
-                cli(['--state-dir', str(self.base / 'other'), 'add', str(uuid.uuid4()), '--cwd', str(self.base),
-                     '--sandbox', 'read-only', '--network', '--codex', str(FAKE)])
-        finally:
-            # Windows cannot remove the temporary directory while SQLite holds it open.
-            for item in opened:
-                item.db.close()
-        self.assertEqual(len(opened), 1)
+        for flag in ('--network', '--git-write'):
+            opened = []
+            def store(path):
+                opened.append(Store(path))
+                return opened[-1]
+            try:
+                with patch('codex_runner.cli.Store', side_effect=store), self.assertRaisesRegex(RunnerError, 'workspace-write'):
+                    cli(['--state-dir', str(self.base / 'other'), 'add', str(uuid.uuid4()), '--cwd', str(self.base),
+                         '--sandbox', 'read-only', flag, '--codex', str(FAKE)])
+            finally:
+                # Windows cannot remove the temporary directory while SQLite holds it open.
+                for item in opened:
+                    item.db.close()
+            self.assertEqual(len(opened), 1)
 
     def test_exhausted_quota_makes_no_model_call(self):
         self.configure(used=100, reset=time.time() + 200)

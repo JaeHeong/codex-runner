@@ -87,6 +87,12 @@ class ManagedTests(unittest.TestCase):
         policy = sandbox_policy(dict(job, network=True))
         self.assertEqual(policy, {'type': 'workspaceWrite', 'writableRoots': [self.job['cwd']], 'networkAccess': True})
 
+    def test_git_write_adds_git_directory_as_writable_root(self):
+        from codex_runner.managed import sandbox_policy
+        policy = sandbox_policy(dict(self.job, sandbox='workspace-write', git_write=True))
+        self.assertEqual(policy['writableRoots'], [self.job['cwd'], str(Path(self.job['cwd']) / '.git')])
+        self.assertFalse(policy['networkAccess'])
+
     def test_windows_restricted_launcher_waits_for_desktop_daemon_without_sending_input(self):
         with patch('codex_runner.managed.LocalServer', side_effect=FileNotFoundError()), \
                 patch('codex_runner.managed.WINDOWS', True), \
