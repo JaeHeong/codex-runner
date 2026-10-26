@@ -97,6 +97,20 @@ class ExecutionTests(unittest.TestCase):
         self.assertIn('workspace-write', args)
         self.assertNotIn('--last', args)
         self.assertNotIn('--dangerously-bypass-approvals-and-sandbox', args)
+        self.assertNotIn('sandbox_workspace_write.network_access=true', args)
+
+    def test_network_option_enables_workspace_write_network(self):
+        cmd = build_command(dict(self.job, network=True), 'schema.json', 'out.json')
+        self.assertIn('sandbox_workspace_write.network_access=true', cmd)
+        self.assertEqual(cmd[cmd.index('sandbox_workspace_write.network_access=true') - 1], '-c')
+        self.assertNotIn('sandbox_workspace_write.network_access=true',
+                         build_command(dict(self.job, network=True, sandbox='read-only'), 'schema.json', 'out.json'))
+
+    def test_network_option_requires_workspace_write(self):
+        from codex_runner.cli import cli
+        with self.assertRaisesRegex(RunnerError, 'workspace-write'):
+            cli(['--state-dir', str(self.base / 'other'), 'add', str(uuid.uuid4()), '--cwd', str(self.base),
+                 '--sandbox', 'read-only', '--network', '--codex', str(FAKE)])
 
     def test_exhausted_quota_makes_no_model_call(self):
         self.configure(used=100, reset=time.time() + 200)

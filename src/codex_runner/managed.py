@@ -17,6 +17,9 @@ from .cli import BUDGET_LIMIT_STATES, PROMPT, RunnerError, SCHEMA, child_env, pr
 from . import __version__
 from .platforms import WINDOWS, codex_command, stop_process, no_console_options
 
+# Capacity failures on OpenAI's side: retried with backoff instead of stopping overnight work.
+TRANSIENT_ERRORS = {'serverOverloaded'}
+
 
 class ProxySocket:
     """Use Codex's native Windows socket client; keep WebSocket framing above it."""
@@ -201,7 +204,7 @@ def sandbox_policy(job):
         return {'type': 'dangerFullAccess'}
     if job['sandbox'] == 'read-only':
         return {'type': 'readOnly', 'networkAccess': False}
-    return {'type': 'workspaceWrite', 'writableRoots': [job['cwd']], 'networkAccess': False}
+    return {'type': 'workspaceWrite', 'writableRoots': [job['cwd']], 'networkAccess': bool(job.get('network'))}
 
 
 def find_turn(server, sid, tid):
@@ -272,11 +275,12 @@ def inspect_latest(server, job):
     quota_error = (turn or {}).get('status') == 'failed' and (
         error.get('codexErrorInfo') == 'usageLimitExceeded' or any(
             state in json.dumps(error) for state in BUDGET_LIMIT_STATES))
+    retryable = quota_error or ((turn or {}).get('status') == 'failed' and error.get('codexErrorInfo') in TRANSIENT_ERRORS)
     # Codex keeps a quota-failed thread in systemError until its next turn.
     # Requiring idle here would permanently stop the very recovery we manage.
-    # Only the latest persisted, explicit quota failure permits that exception;
-    # unknown runtime failures still fail closed, without sending a message.
-    if runtime == 'systemError' and not quota_error:
+    # Only the latest persisted, explicit quota or capacity failure permits that
+    # exception; unknown runtime failures still fail closed, without sending a message.
+    if runtime == 'systemError' and not retryable:
         raise RunnerError('Cannot confirm Codex runtime state: systemError')
     if runtime == 'active':
         return dict(decision, action='wait', detail='Another turn is active; observing without interrupting, next check in 15 seconds')
@@ -294,7 +298,7 @@ def inspect_latest(server, job):
     if job.get('_explicit_input') and status in ('completed', 'failed', 'interrupted'):
         return dict(decision, action='resume', detail='Explicit human follow-up for this session')
     if status in ('failed', 'interrupted'):
-        if job.get('watch_external') and not quota_error:
+        if job.get('watch_external') and not retryable:
             return dict(decision, action='idle', detail='External turn ' + status + '; no automatic retry without a confirmed quota failure')
         return dict(decision, action='resume', detail='Previous turn was ' + status)
     if status != 'completed':
@@ -491,10 +495,16 @@ def run_managed(worker, job):
         if turn.get('status') in ('failed', 'interrupted'):
             store.patch(sid, managed_turn_id=None)
             when = worker.capacity(job, refresh=True)
-            if not when and turn.get('status') == 'failed' and (turn.get('error') or {}).get('codexErrorInfo') == 'usageLimitExceeded':
+            info = (turn.get('error') or {}).get('codexErrorInfo') if turn.get('status') == 'failed' else None
+            if not when and info == 'usageLimitExceeded':
                 # The turn can report the limit before the quota endpoint catches up.
                 worker.wait_reasons[sid] = 'Codex reported usageLimitExceeded; rechecking account availability'
                 when = time.time() + 300
+            elif not when and info in TRANSIENT_ERRORS:
+                retries = store.get(sid).get('overload_retries', 0)
+                store.patch(sid, overload_retries=retries + 1)
+                worker.wait_reasons[sid] = 'Codex reported ' + info + '; retrying'
+                when = time.time() + min(300 * 2 ** retries, 1800)
             if when:
                 worker.schedule_wait(job, when)
                 return
@@ -516,6 +526,6 @@ def run_managed(worker, job):
         # Record the finished parent once and release its turn ownership. Future
         # preflight polls observe linked children before any new continuation.
         worker.finish(job, result, waiting_for=children[1] if children else None)
-        store.patch(sid, managed_turn_id=None)
+        store.patch(sid, managed_turn_id=None, overload_retries=0)
     finally:
         server.close()

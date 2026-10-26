@@ -320,6 +320,8 @@ def build_command(job, schema, output):
     cmd = [job['codex'], '--ask-for-approval', 'never', '--sandbox', job['sandbox'],
            'exec', 'resume', '--json', '--output-schema', str(schema),
            '--output-last-message', str(output)]
+    if job.get('network') and job['sandbox'] == 'workspace-write':
+        cmd += ['-c', 'sandbox_workspace_write.network_access=true']
     if job.get('model'):
         cmd += ['--model', job['model']]
     return codex_command(cmd[0], *cmd[1:], job['id'], job.get('prompt') or PROMPT)
@@ -701,6 +703,7 @@ def cli(argv=None):
     add.add_argument('--model')
     add.add_argument('--limit-id', default='codex')
     add.add_argument('--sandbox', choices=['read-only', 'workspace-write', 'danger-full-access'], default='workspace-write')
+    add.add_argument('--network', action='store_true', help='Allow network access inside workspace-write (for example a local browser debugging port)')
     add.add_argument('--prompt-file', help='Additional scoped continuation instructions')
     for name in ['pause', 'resume', 'remove']:
         command = sub.add_parser(name)
@@ -761,10 +764,12 @@ def cli(argv=None):
         cwd = str(Path(args.cwd).expanduser().resolve(strict=True))
         if not Path(cwd).is_dir():
             raise RunnerError('--cwd must be a directory')
+        if args.network and args.sandbox != 'workspace-write':
+            raise RunnerError('--network applies only to --sandbox workspace-write')
         name = validate_name(args.name) if args.name else default_name(store, cwd, args.session_id)
         job = dict(id=args.session_id, cwd=cwd, codex=resolve_codex(args.codex), path=os.environ.get('PATH', ''),
                    codex_home=str(Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))).expanduser().absolute()),
-                   model=args.model, limit_id=args.limit_id, sandbox=args.sandbox, managed=args.managed, name=name, status='queued',
+                   model=args.model, limit_id=args.limit_id, sandbox=args.sandbox, network=args.network, managed=args.managed, name=name, status='queued',
                    created=time.time(), updated=time.time(), next_run=0, turns=0,
                    prompt=PROMPT + ('\nAdditional instructions:\n' + Path(args.prompt_file).read_text(encoding='utf-8') if args.prompt_file else ''))
         probe_codex(job)

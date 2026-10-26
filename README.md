@@ -460,7 +460,9 @@ codex-runner add YOUR-SESSION-UUID --cwd "$HOME/my-project" \
 
 An existing registration must first be paused, removed, and re-added to change its
 mode. The default sandbox remains `workspace-write`; `--sandbox danger-full-access`
-explicitly enables Full Access. The task file is read at registration, not watched
+explicitly enables Full Access. `--network` keeps `workspace-write` file limits but
+allows network access, for example a task that drives a separately opened browser
+through its local debugging port. The task file is read at registration, not watched
 for later edits. Its contents are appended to the normal continuation instructions.
 
 The terminal may be detached or closed while managed work runs. Reconnect with
@@ -573,6 +575,8 @@ tmux new -s codex-runner 'codex-runner daemon'
   Unknown reset times are polled too; unrecognized limit-state values stop for review.
 - In managed mode, a structured `usageLimitExceeded` turn failure also schedules a
   five-minute recheck if the quota endpoint has not yet reflected the restriction.
+  A `serverOverloaded` failure (model at capacity) is retried after 5 minutes,
+  doubling to at most 30 minutes, and the backoff resets after a completed turn.
 - Quota RPC, authentication, configuration and ordinary execution failures become
   `error`, preserving logs; resolve the issue and explicitly `resume` the registration.
   Confirmed subscription, workspace, and structured usage-limit failures wait as
@@ -594,7 +598,8 @@ Run the runner as your existing Codex login user, not root. Default execution us
 terminal approval. Operations requiring additional permission can fail and must
 be reviewed through the normal workflow. `add --sandbox read-only` is available
 for review work; `danger-full-access` is an explicit opt-in for environments where
-that authority is intended. There is no default sandbox bypass.
+that authority is intended. `add --network` enables network access within
+`workspace-write` only. There is no default sandbox bypass.
 
 In default CLI mode, do not attach an interactive client while the runner owns the
 session. In `--managed` mode, an interactive client may observe it but should not

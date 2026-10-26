@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import socket
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -78,6 +79,13 @@ class ManagedTests(unittest.TestCase):
         self.assertEqual(starts[0]['approvalPolicy'], 'never')
         self.assertIsNone(job.get('managed_turn_id'))
         self.assertEqual(job['turns'], 1)
+
+    def test_workspace_write_network_is_opt_in(self):
+        from codex_runner.managed import sandbox_policy
+        job = dict(self.job, sandbox='workspace-write')
+        self.assertFalse(sandbox_policy(job)['networkAccess'])
+        policy = sandbox_policy(dict(job, network=True))
+        self.assertEqual(policy, {'type': 'workspaceWrite', 'writableRoots': [self.job['cwd']], 'networkAccess': True})
 
     def test_windows_restricted_launcher_waits_for_desktop_daemon_without_sending_input(self):
         with patch('codex_runner.managed.LocalServer', side_effect=FileNotFoundError()), \
@@ -331,6 +339,27 @@ class ManagedTests(unittest.TestCase):
         self.assertEqual(job['status'], 'waiting')
         self.assertIn('usageLimitExceeded', job['detail'])
         self.assertIsNone(job.get('managed_turn_id'))
+
+    def test_server_overload_waits_with_backoff_then_recovers(self):
+        self.turn.update(status='failed', error={'codexErrorInfo': 'serverOverloaded'})
+        before = time.time()
+        job = self.run_job()
+        self.assertEqual(job['status'], 'waiting')
+        self.assertIn('serverOverloaded', job['detail'])
+        self.assertAlmostEqual(job['next_run'] - before, 300, delta=5)
+        self.store.patch(self.job['id'], status='queued')
+        self.assertAlmostEqual(self.run_job()['next_run'] - before, 600, delta=5)
+        self.store.patch(self.job['id'], status='queued')
+        self.turn.update(status='completed', error=None)
+        job = self.run_job()
+        self.assertEqual(job['status'], 'complete')
+        self.assertEqual(job['overload_retries'], 0)
+
+    def test_system_error_after_server_overload_resumes(self):
+        self.thread_status = 'systemError'
+        self.latest_turn.update(status='failed', error={'codexErrorInfo': 'serverOverloaded'})
+        self.assertEqual(self.run_job()['status'], 'complete')
+        self.assertEqual(len([m for m, p in self.calls if m == 'turn/start']), 1)
 
     def test_ordinary_turn_failure_still_stops_for_review(self):
         self.turn.update(status='failed', error={'codexErrorInfo': 'other', 'message': 'broken config'})
