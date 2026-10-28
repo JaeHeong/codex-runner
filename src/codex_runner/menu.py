@@ -4,11 +4,11 @@ import sys
 import time
 import unicodedata
 
-from .cli import RunnerError, control_job, update_prompt
+from .cli import RunnerError, control_job, read_models, update_model, update_prompt
 from .logview import LABELS, clean
 
 ACTIONS = [('add', '[A Add]'), ('delete', '[D Delete]'), ('logs', '[L Logs]'), ('resume', '[R Resume]'), ('pause', '[P Pause]'),
-           ('name', '[N Name]'), ('prompt', '[E Prompt]'), ('quit', '[Q Quit]')]
+           ('name', '[N Name]'), ('prompt', '[E Prompt]'), ('model', '[M Model]'), ('quit', '[Q Quit]')]
 
 
 def cell_width(text):
@@ -127,7 +127,7 @@ def screen(win, store, select_only=False, initial_sid=None, usage=None):
             environment = job if job.get('codex') and job.get('codex_home') else None
             status = visible_status(job)
             label = '실행 전 상태 확인 중' if status == 'checking' else LABELS.get(status, status)
-            draw(win, h - 13, 2, '상태: ' + label + ' · ' + (job.get('detail') or ''), w - 4)
+            draw(win, h - 13, 2, '상태: ' + label + ' · 모델: ' + model_text(job) + ' · ' + (job.get('detail') or ''), w - 4)
             draw(win, h - 11, 2, '문구: ' + (job.get('prompt') or ''), w - 4)
         else:
             draw(win, 5, 2, '등록된 세션이 없습니다. A / Add로 기존 Codex 세션을 선택하세요.', w - 4)
@@ -161,7 +161,7 @@ def screen(win, store, select_only=False, initial_sid=None, usage=None):
             for i, (action, text, x, y) in enumerate(button_layout(w, h - 5)):
                 draw(win, y, x, text, w - x - 1, curses.A_REVERSE if i == action_index else 0)
                 buttons.append((action, x, x + len(text), y))
-        draw(win, h - 2, 2, 'A 추가 · D 등록해제 · N 이름 · E 문구 · L 로그 · R 재개 · P 중지 · F5 한도갱신', w - 4)
+        draw(win, h - 2, 2, 'A 추가 · D 등록해제 · N 이름 · E 문구 · M 모델 · L 로그 · R 재개 · P 중지 · F5 한도갱신', w - 4)
         win.refresh()
         key = win.getch()
         action = None
@@ -198,7 +198,7 @@ def screen(win, store, select_only=False, initial_sid=None, usage=None):
             except curses.error:
                 pass
         elif not select_only:
-            action = {'a': 'add', 'd': 'delete', 'l': 'logs', 'r': 'resume', 'p': 'pause', 'n': 'name', 'e': 'prompt'}.get(chr(key).lower() if 0 <= key < 256 else '')
+            action = {'a': 'add', 'd': 'delete', 'l': 'logs', 'r': 'resume', 'p': 'pause', 'n': 'name', 'e': 'prompt', 'm': 'model'}.get(chr(key).lower() if 0 <= key < 256 else '')
         if key == curses.KEY_F5 and usage and environment:
             usage.request(environment, force=True)
         if action == 'quit':
@@ -359,6 +359,44 @@ def delete_registration(store, sid):
         store.delete(sid)
 
 
+def model_text(job):
+    if not job.get('model') and not job.get('effort'):
+        return '세션 설정'
+    return (job.get('model') or '세션 모델') + ' / ' + (job.get('effort') or '세션 effort')
+
+
+def choose_model(store, sid):
+    job = store.get(sid)
+    print('Codex 모델 목록을 불러오는 중…')
+    models = read_models(job)
+    keep, reset = object(), object()
+    choices = [{'key': keep, 'label': '모델 유지 · ' + (job.get('model') or '세션의 마지막 설정'), 'detail': 'effort만 바꿉니다.'}]
+    choices += [{'key': m['model'], 'label': m['model'] + ('  (Codex 기본)' if m.get('isDefault') else ''),
+                 'detail': m.get('description') or m.get('displayName') or ''} for m in models]
+    choices.append({'key': reset, 'label': '지정 해제', 'detail': 'Runner가 덮어쓰지 않고 세션의 마지막 모델·effort를 그대로 씁니다.'})
+    model = choose('Model · ' + (job.get('name') or sid[:12]) + ' · 다음 턴부터 적용', choices)
+    if model is None:
+        return
+    if model['key'] is reset:
+        update_model(store, sid, reset=True)
+        return
+    name = None if model['key'] is keep else model['key']
+    chosen = next((m for m in models if m['model'] == (name or job.get('model'))), None)
+    if chosen:
+        options = [(e['reasoningEffort'], e.get('description', ''), chosen.get('defaultReasoningEffort'))
+                   for e in chosen.get('supportedReasoningEfforts') or []]
+    else:
+        names = sorted({e['reasoningEffort'] for m in models for e in m.get('supportedReasoningEfforts') or []})
+        options = [(e, '', None) for e in names]
+    effort = choose('Effort · ' + (name or job.get('model') or '세션 모델'), [
+        {'key': keep, 'label': 'effort 유지 · ' + (job.get('effort') or '세션의 마지막 설정'), 'detail': ''}] + [
+        {'key': value, 'label': value + ('  (모델 기본)' if value == default else ''), 'detail': detail}
+        for value, detail, default in options])
+    if effort is None:
+        return
+    update_model(store, sid, model=name, effort=None if effort['key'] is keep else effort['key'], models=models)
+
+
 def confirm_completed(decision):
     selected = choose('Resume · 마지막 턴이 이미 끝났습니다', [
         {'key': 'cancel', 'label': '문구 전송 없이 멈추기 (기본)', 'detail': decision.get('preview') or decision['detail']},
@@ -393,6 +431,8 @@ def run_menu(store):
                     value = input('새 문구 (빈칸: 취소): ')
                     if value.strip():
                         update_prompt(store, sid, value)
+                elif action == 'model':
+                    choose_model(store, sid)
                 elif action == 'name':
                     print('현재 이름: ' + (store.get(sid).get('name') or '(없음)'))
                     value = input('새 이름 (빈칸: 취소): ')

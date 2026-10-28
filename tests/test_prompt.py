@@ -50,10 +50,7 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(self.store.get(self.sid)['prompt'], 'old instructions')
 
     def test_model_and_effort_change_only_next_turn_settings(self):
-        result = subprocess.run([sys.executable, '-m', 'codex_runner.cli', '--state-dir', str(self.store.base),
-                                 'model', self.sid, '--effort', 'high'], capture_output=True, text=True, timeout=5)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('effort: high', result.stdout)
+        update_model(self.store, self.sid, effort='high')
         update_model(self.store, self.sid, model='gpt-test')
         after = self.store.get(self.sid)
         self.assertEqual((after['model'], after['effort']), ('gpt-test', 'high'))

@@ -145,6 +145,27 @@ class NamesTests(unittest.TestCase):
         self.assertLessEqual(max(y for _, _, _, y in buttons), 20)
         self.assertTrue(all(x + len(text) <= 62 for _, text, x, _ in buttons))
 
+    def test_model_picker_offers_codex_models_and_their_efforts(self):
+        from codex_runner.menu import choose_model, model_text
+        models = [{'model': 'gpt-a', 'isDefault': True, 'defaultReasoningEffort': 'medium',
+                   'supportedReasoningEfforts': [{'reasoningEffort': 'low'}, {'reasoningEffort': 'medium'}]},
+                  {'model': 'gpt-b', 'defaultReasoningEffort': 'high',
+                   'supportedReasoningEfforts': [{'reasoningEffort': 'high'}, {'reasoningEffort': 'max'}]}]
+        shown = []
+        def pick(title, choices):
+            shown.append([c['key'] for c in choices if isinstance(c['key'], str)])
+            return next(c for c in choices if c['key'] == ('gpt-b' if len(shown) == 1 else 'max'))
+        with patch('codex_runner.menu.read_models', return_value=models), patch('codex_runner.menu.choose', side_effect=pick):
+            choose_model(self.store, SID1)
+        self.assertEqual(shown, [['gpt-a', 'gpt-b'], ['high', 'max']])
+        job = self.store.get(SID1)
+        self.assertEqual((job['model'], job['effort'], job['status']), ('gpt-b', 'max', 'error'))
+        self.assertEqual(model_text(job), 'gpt-b / max')
+        with patch('codex_runner.menu.read_models', return_value=models), \
+             patch('codex_runner.menu.choose', side_effect=lambda title, choices: choices[-1]):
+            choose_model(self.store, SID1)
+        self.assertEqual(model_text(self.store.get(SID1)), '세션 설정')
+
     def test_add_browser_registers_selected_history_paused(self):
         folder = self.base / 'new-project'; folder.mkdir()
         thread = {'id': '01a151c9-b419-73f3-8fd2-119ba622ac45', 'cwd': str(folder), 'name': '테스트 작업', 'updatedAt': 123}

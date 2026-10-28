@@ -118,6 +118,22 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index('model_reasoning_effort="high"') - 1], '-c')
         self.assertFalse(any('model_reasoning_effort' in v for v in build_command(self.job, 'schema.json', 'out.json')))
 
+    def test_model_command_lists_and_validates_against_codex_models(self):
+        from codex_runner.cli import read_models
+        self.assertEqual([m['model'] for m in read_models(self.job)], ['gpt-test'])
+        command = [sys.executable, '-m', 'codex_runner.cli', '--state-dir', str(self.store.base), 'model', self.job['id']]
+        listed = subprocess.run(command + ['--list'], capture_output=True, text=True, timeout=20)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertIn('low, medium*, high', listed.stdout)
+        self.assertNotIn('gpt-hidden', listed.stdout)
+        for args in (['--model', 'gpt-missing'], ['--effort', 'ultra']):
+            rejected = subprocess.run(command + args, capture_output=True, text=True, timeout=20)
+            self.assertNotEqual(rejected.returncode, 0)
+        changed = subprocess.run(command + ['--model', 'gpt-test', '--effort', 'high'], capture_output=True, text=True, timeout=20)
+        self.assertEqual(changed.returncode, 0, changed.stderr)
+        job = self.store.get(self.job['id'])
+        self.assertEqual((job['model'], job['effort'], job['status']), ('gpt-test', 'high', 'queued'))
+
     def test_network_and_git_write_options_require_workspace_write(self):
         from codex_runner.cli import cli
         for flag in ('--network', '--git-write'):

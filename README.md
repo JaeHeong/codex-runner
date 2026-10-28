@@ -99,6 +99,7 @@ The rightmost `PROMPT` column shows each session's current continuation message.
 It receives the remaining terminal width; other columns stay bounded. Long or
 multiline messages are shown on one line with an ellipsis. Widening the terminal
 reveals more text; E / Prompt displays and edits the complete stored message.
+M / Model picks the model and reasoning effort from the list Codex offers.
 
 The menu needs an interactive terminal, Python's standard `curses` module, and
 at least 64 columns by 20 rows. Mouse use depends on terminal forwarding; arrow
@@ -439,12 +440,16 @@ codex-runner prompt YOUR-SESSION-UUID --file "$HOME/runner-task.txt"
 The model and reasoning effort are changed the same way:
 
 ```sh
+codex-runner model --list
 codex-runner model YOUR-SESSION-UUID
 codex-runner model YOUR-SESSION-UUID --model gpt-5.5 --effort high
 codex-runner model YOUR-SESSION-UUID --reset
 ```
 
-`model` without an option prints the stored overrides. `--model` and `--effort`
+`--list` shows the models and reasoning efforts that Codex's `model/list` offers
+(`*` marks each model's default effort); values outside it are rejected, since they
+would only fail at the start of an unattended turn. In the terminal menu, M / Model
+opens the same choices. `model` without an option prints the stored overrides. `--model` and `--effort`
 can be set separately and apply from the next turn; `add` accepts both too.
 `--reset` stops overriding. Codex then keeps the session's last settings, since
 an override also becomes the session's setting for later turns.

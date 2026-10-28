@@ -219,6 +219,23 @@ def child_env(job):
 
 def read_limits(job, timeout=30):
     """Use the documented RPC; never read auth tokens or call a model."""
+    return query_app_server(job, lambda rpc: rpc('account/rateLimits/read'), timeout)
+
+
+def read_models(job, timeout=30):
+    """List the picker's models and their reasoning efforts; no model call is made."""
+    def work(rpc):
+        models, cursor = [], None
+        while True:
+            page = rpc('model/list', {'cursor': cursor} if cursor else {})
+            models += [m for m in page.get('data') or [] if not m.get('hidden')]
+            cursor = page.get('nextCursor')
+            if not cursor:
+                return models
+    return query_app_server(job, work, timeout)
+
+
+def query_app_server(job, work, timeout=30):
     proc = subprocess.Popen(codex_command(job['codex'], 'app-server'), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             text=True, encoding='utf-8', env=child_env(job), **child_options())
@@ -248,12 +265,12 @@ def read_limits(job, timeout=30):
             except queue.Empty:
                 break
             if msg is None:
-                raise RunnerError('Codex app-server exited before the quota response')
+                raise RunnerError('Codex app-server exited before the ' + method + ' response')
             if msg.get('id') == number:
                 if 'error' in msg:
-                    raise RunnerError('Codex quota RPC failed: ' + str(msg['error'].get('message', 'unknown error')))
+                    raise RunnerError('Codex ' + method + ' RPC failed: ' + str(msg['error'].get('message', 'unknown error')))
                 return msg['result']
-        raise RunnerError('Codex quota lookup timed out; no model run was started')
+        raise RunnerError('Codex ' + method + ' lookup timed out; no model run was started')
 
     try:
         rpc(1, 'initialize', {'clientInfo': {'name': 'codex_runner', 'version': __version__}})
@@ -261,7 +278,8 @@ def read_limits(job, timeout=30):
         account = rpc(2, 'account/read').get('account')
         if not account or account.get('type') not in ('chatgpt', 'chatgptAuthTokens'):
             raise RunnerError('ChatGPT login is required; API-key billing is not used as a fallback')
-        return rpc(3, 'account/rateLimits/read')
+        numbers = iter(range(3, 1000))
+        return work(lambda method, params=None: rpc(next(numbers), method, params))
     except (BrokenPipeError, OSError) as exc:
         raise RunnerError('Could not communicate with Codex app-server: ' + str(exc)) from None
     finally:
@@ -638,7 +656,7 @@ def update_prompt(store, sid, text):
     store.patch(sid, prompt=text)
 
 
-def update_model(store, sid, model=None, effort=None, reset=False):
+def update_model(store, sid, model=None, effort=None, reset=False, models=None):
     if reset and (model is not None or effort is not None):
         raise RunnerError('--reset cannot be combined with --model or --effort')
     values = dict(model=None, effort=None) if reset else {}
@@ -647,7 +665,29 @@ def update_model(store, sid, model=None, effort=None, reset=False):
             if not value.strip():
                 raise RunnerError('--' + key + ' must not be empty')
             values[key] = value.strip()
+    if models and not reset:
+        # An unsupported value would only fail later, at the start of an unattended turn.
+        job = store.get(sid)
+        chosen = values.get('model') or job.get('model')
+        known = {m['model']: [e['reasoningEffort'] for e in m.get('supportedReasoningEfforts') or []] for m in models}
+        if values.get('model') and chosen not in known:
+            raise RunnerError('Unknown model ' + chosen + '; see codex-runner model --list')
+        efforts = known.get(chosen) or sorted({e for v in known.values() for e in v})
+        current = values.get('effort') or job.get('effort')
+        if current and efforts and current not in efforts:
+            raise RunnerError('Effort ' + current + ' is not supported' + (' by ' + chosen if chosen else '') +
+                              '; choose one of: ' + ', '.join(efforts))
     return store.patch(sid, **values) if values else store.get(sid)
+
+
+def model_lines(models):
+    width = max([len(m['model']) for m in models] + [5]) + 2
+    lines = ['MODEL'.ljust(width) + 'EFFORTS (* = default)']
+    for m in models:
+        default = m.get('defaultReasoningEffort')
+        efforts = [e['reasoningEffort'] + ('*' if e['reasoningEffort'] == default else '') for e in m.get('supportedReasoningEfforts') or []]
+        lines.append(m['model'].ljust(width) + ', '.join(efforts) + ('  (Codex default model)' if m.get('isDefault') else ''))
+    return lines
 
 
 def validate_name(name):
@@ -758,6 +798,7 @@ def cli(argv=None):
     prompt_options.add_argument('--default', action='store_true', help='Reset to the current built-in default')
     model = sub.add_parser('model', help='Read or change the model and reasoning effort for the next turn')
     model.add_argument('session_id', nargs='?')
+    model.add_argument('--list', action='store_true', help='Show the models and reasoning efforts this Codex offers')
     model.add_argument('--model', help='Model for runner turns')
     model.add_argument('--effort', help='Reasoning effort for runner turns, for example low, medium, high or xhigh')
     model.add_argument('--reset', action='store_true', help="Stop overriding both; Codex keeps the session's last settings")
@@ -797,7 +838,8 @@ def cli(argv=None):
     if not WINDOWS and os.geteuid() == 0:
         raise RunnerError('Run as your Codex login user, not root; sudo is only needed to install the package')
     store = Store(args.state_dir)
-    if args.command in ('pause', 'resume', 'remove', 'prompt', 'model', 'logs', 'alias', 'send'):
+    if args.command in ('pause', 'resume', 'remove', 'prompt', 'logs', 'alias', 'send') or (
+            args.command == 'model' and not (args.list and args.session_id is None)):
         args.session_id = select_session(store, args.session_id)
     if args.command in (None, 'menu', 'ui'):
         from .menu import run_menu
@@ -831,7 +873,16 @@ def cli(argv=None):
             print(store.get(args.session_id).get('prompt') or PROMPT)
     elif args.command == 'model':
         changed = args.reset or args.model is not None or args.effort is not None
-        job = update_model(store, args.session_id, args.model, args.effort, args.reset)
+        if args.list or (changed and not args.reset):
+            from .catalog import account_job
+            source = store.get(args.session_id) if args.session_id else account_job()
+            models = read_models(source)
+            if args.list:
+                print('\n'.join(model_lines(models)))
+                if not args.session_id:
+                    return
+        job = update_model(store, args.session_id, args.model, args.effort, args.reset,
+                           models=models if changed and not args.reset else None)
         print('model:', job.get('model') or "(session's last setting)")
         print('effort:', job.get('effort') or "(session's last setting)")
         if changed:

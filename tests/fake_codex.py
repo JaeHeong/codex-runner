@@ -26,6 +26,11 @@ elif sys.argv[1] == 'app-server':
                         'windowDurationMins': 300, 'resetsAt': data.get('reset', time.time() + 90)},
                         'secondary': data.get('secondary'), 'rateLimitReachedType': data.get('limit_type')}
             result = {'rateLimits': snapshot}
+        elif method == 'model/list':
+            result = {'data': load().get('models', [
+                {'model': 'gpt-test', 'isDefault': True, 'hidden': False, 'defaultReasoningEffort': 'medium',
+                 'supportedReasoningEfforts': [{'reasoningEffort': e} for e in ('low', 'medium', 'high')]},
+                {'model': 'gpt-hidden', 'hidden': True, 'supportedReasoningEfforts': []}]), 'nextCursor': None}
         else:
             result = {}
         print(json.dumps({'id': msg['id'], 'result': result}), flush=True)
