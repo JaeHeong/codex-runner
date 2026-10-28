@@ -439,6 +439,8 @@ def run_managed(worker, job):
                       'outputSchema': SCHEMA}
             if job.get('model'):
                 params['model'] = job['model']
+            if job.get('effort'):
+                params['effort'] = job['effort']
             # A lost start response must never cause the same request to be replayed.
             begin_delivery(store, sid, followup['id'] if followup else None)
             turn = server.rpc('turn/start', params)['turn']

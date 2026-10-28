@@ -77,8 +77,16 @@ class ManagedTests(unittest.TestCase):
         self.assertEqual(starts[0]['input'][0]['text'], 'authorized task')
         self.assertEqual(starts[0]['sandboxPolicy'], {'type': 'dangerFullAccess'})
         self.assertEqual(starts[0]['approvalPolicy'], 'never')
+        self.assertNotIn('model', starts[0])
+        self.assertNotIn('effort', starts[0])
         self.assertIsNone(job.get('managed_turn_id'))
         self.assertEqual(job['turns'], 1)
+
+    def test_model_and_effort_overrides_are_sent_when_set(self):
+        self.store.patch(self.job['id'], model='gpt-test', effort='high')
+        self.run_job()
+        start = [p for m, p in self.calls if m == 'turn/start'][0]
+        self.assertEqual((start['model'], start['effort']), ('gpt-test', 'high'))
 
     def test_workspace_write_network_is_opt_in(self):
         from codex_runner.managed import sandbox_policy

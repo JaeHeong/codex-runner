@@ -436,6 +436,19 @@ codex-runner prompt YOUR-SESSION-UUID --text '이전에 하던 작업 이어서 
 codex-runner prompt YOUR-SESSION-UUID --file "$HOME/runner-task.txt"
 ```
 
+The model and reasoning effort are changed the same way:
+
+```sh
+codex-runner model YOUR-SESSION-UUID
+codex-runner model YOUR-SESSION-UUID --model gpt-5.5 --effort high
+codex-runner model YOUR-SESSION-UUID --reset
+```
+
+`model` without an option prints the stored overrides. `--model` and `--effort`
+can be set separately and apply from the next turn; `add` accepts both too.
+`--reset` stops overriding. Codex then keeps the session's last settings, since
+an override also becomes the session's setting for later turns.
+
 `prompt` without an option prints the current message. The setters replace the
 entire stored message and apply to the next continuation turn. They do not send
 anything to an active turn, reset a quota timer, unpause a job, retry an error,
@@ -563,8 +576,8 @@ tmux new -s codex-runner 'codex-runner daemon'
 - The default metered bucket is `codex`. `codex-runner limits` displays it;
   `add --limit-id ID` selects another known bucket when the chosen model uses one.
   Unknown buckets stop the job instead of guessing.
-- A `--model` override is optional. Without it, Codex's normal session/config model
-  selection applies. The runner never switches models or accounts to evade limits,
+- `--model` and `--effort` overrides are optional. Without them, Codex's normal
+  session/config selection applies. The runner never switches models or accounts to evade limits,
   consumes earned reset credits, or automatically purchases credits.
 - API-key authentication does not substitute for a missing ChatGPT login.
 - Version 0.2.1 fixes a missed-resume bug: workspace credit/usage limits previously

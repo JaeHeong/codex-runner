@@ -112,6 +112,12 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(roots, ['sandbox_workspace_write.writable_roots=' + json.dumps([str(self.base / '.git')])])
         self.assertEqual(cmd[cmd.index(roots[0]) - 1], '-c')
 
+    def test_model_and_effort_are_passed_only_when_set(self):
+        cmd = build_command(dict(self.job, model='gpt-test', effort='high'), 'schema.json', 'out.json')
+        self.assertEqual(cmd[cmd.index('--model') + 1], 'gpt-test')
+        self.assertEqual(cmd[cmd.index('model_reasoning_effort="high"') - 1], '-c')
+        self.assertFalse(any('model_reasoning_effort' in v for v in build_command(self.job, 'schema.json', 'out.json')))
+
     def test_network_and_git_write_options_require_workspace_write(self):
         from codex_runner.cli import cli
         for flag in ('--network', '--git-write'):

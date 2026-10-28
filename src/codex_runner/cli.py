@@ -329,6 +329,8 @@ def build_command(job, schema, output):
         cmd += ['-c', 'sandbox_workspace_write.writable_roots=' + json.dumps([str(Path(job['cwd']) / '.git')])]
     if job.get('model'):
         cmd += ['--model', job['model']]
+    if job.get('effort'):
+        cmd += ['-c', 'model_reasoning_effort=' + json.dumps(job['effort'])]
     return codex_command(cmd[0], *cmd[1:], job['id'], job.get('prompt') or PROMPT)
 
 
@@ -636,6 +638,18 @@ def update_prompt(store, sid, text):
     store.patch(sid, prompt=text)
 
 
+def update_model(store, sid, model=None, effort=None, reset=False):
+    if reset and (model is not None or effort is not None):
+        raise RunnerError('--reset cannot be combined with --model or --effort')
+    values = dict(model=None, effort=None) if reset else {}
+    for key, value in (('model', model), ('effort', effort)):
+        if value is not None:
+            if not value.strip():
+                raise RunnerError('--' + key + ' must not be empty')
+            values[key] = value.strip()
+    return store.patch(sid, **values) if values else store.get(sid)
+
+
 def validate_name(name):
     name = name.strip()
     if not name or len(name) > 48 or not name[0].isalnum() or any(not (c.isalnum() or c in '._-') for c in name):
@@ -722,6 +736,7 @@ def cli(argv=None):
     add.add_argument('--managed', action='store_true', help='Use the existing local Codex app-server; the terminal may stay connected for observation')
     add.add_argument('--codex')
     add.add_argument('--model')
+    add.add_argument('--effort', help='Reasoning effort for runner turns, for example low, medium, high or xhigh')
     add.add_argument('--limit-id', default='codex')
     add.add_argument('--sandbox', choices=['read-only', 'workspace-write', 'danger-full-access'], default='workspace-write')
     add.add_argument('--network', action='store_true', help='Allow network access inside workspace-write (for example a local browser debugging port)')
@@ -741,6 +756,11 @@ def cli(argv=None):
     prompt_options.add_argument('--text', help='Replace the entire continuation message')
     prompt_options.add_argument('--file', help='Read the entire continuation message from a UTF-8 file')
     prompt_options.add_argument('--default', action='store_true', help='Reset to the current built-in default')
+    model = sub.add_parser('model', help='Read or change the model and reasoning effort for the next turn')
+    model.add_argument('session_id', nargs='?')
+    model.add_argument('--model', help='Model for runner turns')
+    model.add_argument('--effort', help='Reasoning effort for runner turns, for example low, medium, high or xhigh')
+    model.add_argument('--reset', action='store_true', help="Stop overriding both; Codex keeps the session's last settings")
     status = sub.add_parser('status'); status.add_argument('--json', action='store_true')
     logs = sub.add_parser('logs'); logs.add_argument('session_id', nargs='?')
     logs.add_argument('--lines', type=int, default=60, help='Recent readable lines (raw mode: lines per file)')
@@ -777,7 +797,7 @@ def cli(argv=None):
     if not WINDOWS and os.geteuid() == 0:
         raise RunnerError('Run as your Codex login user, not root; sudo is only needed to install the package')
     store = Store(args.state_dir)
-    if args.command in ('pause', 'resume', 'remove', 'prompt', 'logs', 'alias', 'send'):
+    if args.command in ('pause', 'resume', 'remove', 'prompt', 'model', 'logs', 'alias', 'send'):
         args.session_id = select_session(store, args.session_id)
     if args.command in (None, 'menu', 'ui'):
         from .menu import run_menu
@@ -791,7 +811,7 @@ def cli(argv=None):
         name = validate_name(args.name) if args.name else default_name(store, cwd, args.session_id)
         job = dict(id=args.session_id, cwd=cwd, codex=resolve_codex(args.codex), path=os.environ.get('PATH', ''),
                    codex_home=str(Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))).expanduser().absolute()),
-                   model=args.model, limit_id=args.limit_id, sandbox=args.sandbox, network=args.network, git_write=args.git_write, managed=args.managed, name=name, status='queued',
+                   model=args.model, effort=args.effort, limit_id=args.limit_id, sandbox=args.sandbox, network=args.network, git_write=args.git_write, managed=args.managed, name=name, status='queued',
                    created=time.time(), updated=time.time(), next_run=0, turns=0,
                    prompt=PROMPT + ('\nAdditional instructions:\n' + Path(args.prompt_file).read_text(encoding='utf-8') if args.prompt_file else ''))
         probe_codex(job)
@@ -809,6 +829,13 @@ def cli(argv=None):
             print('Updated continuation message; applies on the next turn. Execution state is unchanged.')
         else:
             print(store.get(args.session_id).get('prompt') or PROMPT)
+    elif args.command == 'model':
+        changed = args.reset or args.model is not None or args.effort is not None
+        job = update_model(store, args.session_id, args.model, args.effort, args.reset)
+        print('model:', job.get('model') or "(session's last setting)")
+        print('effort:', job.get('effort') or "(session's last setting)")
+        if changed:
+            print('Updated; applies on the next turn. Execution state is unchanged.')
     elif args.command in ('pause', 'resume'):
         control_job(store, args.session_id, args.command, getattr(args, 'continue_completed', False))
         print(args.command, args.session_id)

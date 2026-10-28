@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from codex_runner.cli import PROMPT, RunnerError, Store, update_prompt
+from codex_runner.cli import PROMPT, RunnerError, Store, update_model, update_prompt
 
 
 class PromptTests(unittest.TestCase):
@@ -48,6 +48,22 @@ class PromptTests(unittest.TestCase):
         with self.assertRaises(RunnerError):
             update_prompt(self.store, self.sid, ' \n')
         self.assertEqual(self.store.get(self.sid)['prompt'], 'old instructions')
+
+    def test_model_and_effort_change_only_next_turn_settings(self):
+        result = subprocess.run([sys.executable, '-m', 'codex_runner.cli', '--state-dir', str(self.store.base),
+                                 'model', self.sid, '--effort', 'high'], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('effort: high', result.stdout)
+        update_model(self.store, self.sid, model='gpt-test')
+        after = self.store.get(self.sid)
+        self.assertEqual((after['model'], after['effort']), ('gpt-test', 'high'))
+        for key in ['status', 'next_run', 'last_run', 'turns', 'pid', 'managed_turn_id', 'prompt']:
+            self.assertEqual(after[key], self.job[key])
+        update_model(self.store, self.sid, reset=True)
+        self.assertEqual((self.store.get(self.sid)['model'], self.store.get(self.sid)['effort']), (None, None))
+        for bad in [dict(effort=' '), dict(reset=True, model='gpt-test')]:
+            with self.assertRaises(RunnerError):
+                update_model(self.store, self.sid, **bad)
 
     def test_editing_running_or_error_job_changes_only_next_message(self):
         for status in ['running', 'error', 'complete', 'paused']:
