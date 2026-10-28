@@ -10,7 +10,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-from codex_runner.cli import (RunnerError, SCHEMA, Store, Worker, build_command,
+from codex_runner.cli import (RunnerError, SCHEMA, Store, Worker, build_command, control_job,
                              read_limits, retry_at, select_limit)
 
 FAKE = Path(__file__).with_name('fake_codex.py')
@@ -167,6 +167,44 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(self.store.get(job['id'])['status'], 'complete')
         calls = [json.loads(s) for s in self.fixture.with_suffix('.calls').read_text().splitlines()]
         self.assertEqual([c[-2] for c in calls], [job['id'], job['id']])
+
+    def test_auto_resume_limit_pauses_after_allowed_resumes(self):
+        sid = self.job['id']
+        self.store.patch(sid, max_quota_resumes=1)
+        self.configure(mode='quota_error')
+        Worker(self.store).run(self.job)
+        self.assertEqual(self.store.get(sid)['status'], 'waiting')
+        Worker(self.store).run(self.store.get(sid))
+        job = self.store.get(sid)
+        self.assertEqual((job['status'], job.get('quota_resumes', 0)), ('waiting', 0))
+        self.configure(mode='quota_error')
+        Worker(self.store).run(job)
+        job = self.store.get(sid)
+        self.assertEqual((job['status'], job['quota_resumes']), ('paused', 1))
+        self.assertIn('1 automatic resume', job['detail'])
+        self.assertEqual(len(self.fixture.with_suffix('.calls').read_text().splitlines()), 2)
+        control_job(self.store, sid, 'resume')
+        job = self.store.get(sid)
+        self.assertEqual((job['status'], job['quota_resumes'], job['quota_waiting']), ('queued', 0, False))
+
+    def test_limit_set_during_an_existing_quota_wait_allows_one_more_turn(self):
+        from codex_runner.cli import update_auto_resume
+        sid = self.job['id']
+        self.configure(mode='quota_error')
+        Worker(self.store).run(self.job)
+        self.store.patch(sid, quota_waiting=None)  # a wait recorded before this option existed
+        update_auto_resume(self.store, sid, 1)
+        self.configure(mode='quota_error')
+        Worker(self.store).run(self.store.get(sid))
+        job = self.store.get(sid)
+        self.assertEqual((job['status'], job['quota_resumes']), ('paused', 1))
+
+    def test_zero_auto_resumes_pauses_at_first_exhaustion(self):
+        self.store.patch(self.job['id'], max_quota_resumes=0)
+        self.configure(used=100, reset=time.time() + 200)
+        Worker(self.store).run(self.job)
+        self.assertEqual(self.store.get(self.job['id'])['status'], 'paused')
+        self.assertFalse(self.fixture.with_suffix('.calls').exists())
 
     def test_workspace_credit_error_is_polled_then_resumes_after_clear(self):
         self.configure(mode='credit_error')

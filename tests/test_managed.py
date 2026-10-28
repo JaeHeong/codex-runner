@@ -354,6 +354,15 @@ class ManagedTests(unittest.TestCase):
         self.assertIn('usageLimitExceeded', job['detail'])
         self.assertIsNone(job.get('managed_turn_id'))
 
+    def test_refused_turn_after_quota_wait_does_not_use_a_resume(self):
+        self.store.patch(self.job['id'], max_quota_resumes=1, quota_waiting=True)
+        self.turn.update(status='failed', error={'codexErrorInfo': 'usageLimitExceeded'})
+        job = self.run_job()
+        self.assertEqual((job['status'], job['quota_resumes'], job['quota_waiting']), ('waiting', 0, True))
+        self.turn.update(status='completed')
+        job = self.run_job()
+        self.assertEqual((job['status'], job['quota_resumes']), ('complete', 1))
+
     def test_server_overload_waits_with_backoff_then_recovers(self):
         self.turn.update(status='failed', error={'codexErrorInfo': 'serverOverloaded'})
         before = time.time()

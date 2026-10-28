@@ -166,6 +166,18 @@ class NamesTests(unittest.TestCase):
             choose_model(self.store, SID1)
         self.assertEqual(model_text(self.store.get(SID1)), '세션 설정')
 
+    def test_times_picker_limits_automatic_resumes(self):
+        from codex_runner.menu import choose_times, times_text
+        self.assertEqual(times_text(self.store.get(SID1)), '무제한')
+        with patch('codex_runner.menu.choose', return_value={'key': 2}):
+            choose_times(self.store, SID1)
+        self.assertEqual(times_text(self.store.get(SID1)), '0/2회')
+        result = self.command('auto-resume', 'tech', '--unlimited')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('0/unlimited', result.stdout)
+        self.assertIsNone(self.store.get(SID1)['max_quota_resumes'])
+        self.assertNotEqual(self.command('auto-resume', 'tech', '--times', '-1').returncode, 0)
+
     def test_add_browser_registers_selected_history_paused(self):
         folder = self.base / 'new-project'; folder.mkdir()
         thread = {'id': '01a151c9-b419-73f3-8fd2-119ba622ac45', 'cwd': str(folder), 'name': '테스트 작업', 'updatedAt': 123}

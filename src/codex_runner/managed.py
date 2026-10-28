@@ -432,6 +432,7 @@ def run_managed(worker, job):
                 return
             if not preflight_worker(worker, current, server):
                 return
+            worker.quota_ready(job)
             from .remote import pending_input, begin_delivery, confirm_delivery
             followup = pending_input(store, sid)
             params = {'threadId': sid, 'input': [{'type': 'text', 'text': followup['text'] if followup else job.get('prompt') or PROMPT}],
@@ -500,14 +501,16 @@ def run_managed(worker, job):
             store.patch(sid, managed_turn_id=None)
             when = worker.capacity(job, refresh=True)
             info = (turn.get('error') or {}).get('codexErrorInfo') if turn.get('status') == 'failed' else None
+            quota = bool(when)
             if not when and info == 'usageLimitExceeded':
                 # The turn can report the limit before the quota endpoint catches up.
                 worker.wait_reasons[sid] = 'Codex reported usageLimitExceeded; rechecking account availability'
-                when = time.time() + 300
+                worker.quota_refused(job)
+                when, quota = time.time() + 300, True
             elif not when and info in TRANSIENT_ERRORS:
                 when = worker.overload_wait(job, info)
             if when:
-                worker.schedule_wait(job, when)
+                worker.schedule_wait(job, when, quota)
                 return
             raise RunnerError('Managed turn ' + str(turn.get('status')) + ': ' + json.dumps(turn.get('error')))
         if turn.get('status') != 'completed':

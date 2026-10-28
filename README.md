@@ -99,7 +99,8 @@ The rightmost `PROMPT` column shows each session's current continuation message.
 It receives the remaining terminal width; other columns stay bounded. Long or
 multiline messages are shown on one line with an ellipsis. Widening the terminal
 reveals more text; E / Prompt displays and edits the complete stored message.
-M / Model picks the model and reasoning effort from the list Codex offers.
+M / Model picks the model and reasoning effort from the list Codex offers;
+T / Times limits automatic resumes after quota resets.
 
 The menu needs an interactive terminal, Python's standard `curses` module, and
 at least 64 columns by 20 rows. Mouse use depends on terminal forwarding; arrow
@@ -453,6 +454,22 @@ opens the same choices. `model` without an option prints the stored overrides. `
 can be set separately and apply from the next turn; `add` accepts both too.
 `--reset` stops overriding. Codex then keeps the session's last settings, since
 an override also becomes the session's setting for later turns.
+
+By default a session keeps resuming after every quota reset until its task is
+complete. To cap that, set how many automatic resumes are allowed:
+
+```sh
+codex-runner auto-resume YOUR-SESSION-UUID --times 2
+codex-runner auto-resume YOUR-SESSION-UUID --unlimited
+codex-runner auto-resume YOUR-SESSION-UUID
+```
+
+With `--times 2`, Runner waits for the reset and continues twice; when quota runs
+out after that, it pauses instead of waiting. `--times 0` pauses at the first
+exhaustion. Polling within one wait, and a turn Codex refuses because its quota
+endpoint lagged, do not use up a resume. A manual `resume` starts a fresh count;
+without options the command prints used/limit. `add --auto-resume-times N` sets it
+at registration, and T / Times does the same in the terminal menu.
 
 `prompt` without an option prints the current message. The setters replace the
 entire stored message and apply to the next continuation turn. They do not send

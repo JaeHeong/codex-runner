@@ -4,11 +4,11 @@ import sys
 import time
 import unicodedata
 
-from .cli import RunnerError, control_job, read_models, update_model, update_prompt
+from .cli import RunnerError, control_job, read_models, update_auto_resume, update_model, update_prompt
 from .logview import LABELS, clean
 
 ACTIONS = [('add', '[A Add]'), ('delete', '[D Delete]'), ('logs', '[L Logs]'), ('resume', '[R Resume]'), ('pause', '[P Pause]'),
-           ('name', '[N Name]'), ('prompt', '[E Prompt]'), ('model', '[M Model]'), ('quit', '[Q Quit]')]
+           ('name', '[N Name]'), ('prompt', '[E Prompt]'), ('model', '[M Model]'), ('times', '[T Times]'), ('quit', '[Q Quit]')]
 
 
 def cell_width(text):
@@ -127,7 +127,7 @@ def screen(win, store, select_only=False, initial_sid=None, usage=None):
             environment = job if job.get('codex') and job.get('codex_home') else None
             status = visible_status(job)
             label = '실행 전 상태 확인 중' if status == 'checking' else LABELS.get(status, status)
-            draw(win, h - 13, 2, '상태: ' + label + ' · 모델: ' + model_text(job) + ' · ' + (job.get('detail') or ''), w - 4)
+            draw(win, h - 13, 2, '상태: ' + label + ' · 모델: ' + model_text(job) + ' · 자동 재개: ' + times_text(job) + ' · ' + (job.get('detail') or ''), w - 4)
             draw(win, h - 11, 2, '문구: ' + (job.get('prompt') or ''), w - 4)
         else:
             draw(win, 5, 2, '등록된 세션이 없습니다. A / Add로 기존 Codex 세션을 선택하세요.', w - 4)
@@ -161,7 +161,7 @@ def screen(win, store, select_only=False, initial_sid=None, usage=None):
             for i, (action, text, x, y) in enumerate(button_layout(w, h - 5)):
                 draw(win, y, x, text, w - x - 1, curses.A_REVERSE if i == action_index else 0)
                 buttons.append((action, x, x + len(text), y))
-        draw(win, h - 2, 2, 'A 추가 · D 등록해제 · N 이름 · E 문구 · M 모델 · L 로그 · R 재개 · P 중지 · F5 한도갱신', w - 4)
+        draw(win, h - 2, 2, 'A 추가 · D 등록해제 · N 이름 · E 문구 · M 모델 · T 횟수 · L 로그 · R 재개 · P 중지 · F5 한도갱신', w - 4)
         win.refresh()
         key = win.getch()
         action = None
@@ -198,7 +198,7 @@ def screen(win, store, select_only=False, initial_sid=None, usage=None):
             except curses.error:
                 pass
         elif not select_only:
-            action = {'a': 'add', 'd': 'delete', 'l': 'logs', 'r': 'resume', 'p': 'pause', 'n': 'name', 'e': 'prompt', 'm': 'model'}.get(chr(key).lower() if 0 <= key < 256 else '')
+            action = {'a': 'add', 'd': 'delete', 'l': 'logs', 'r': 'resume', 'p': 'pause', 'n': 'name', 'e': 'prompt', 'm': 'model', 't': 'times'}.get(chr(key).lower() if 0 <= key < 256 else '')
         if key == curses.KEY_F5 and usage and environment:
             usage.request(environment, force=True)
         if action == 'quit':
@@ -365,6 +365,29 @@ def model_text(job):
     return (job.get('model') or '세션 모델') + ' / ' + (job.get('effort') or '세션 effort')
 
 
+def times_text(job):
+    limit = job.get('max_quota_resumes')
+    return '무제한' if limit is None else f"{job.get('quota_resumes', 0)}/{limit}회"
+
+
+def choose_times(store, sid):
+    job = store.get(sid)
+    picked = choose('Times · 한도 리셋 후 자동 재개 횟수 · 현재 ' + times_text(job), [
+        {'key': None, 'label': '무제한 (기본)', 'detail': '완료될 때까지 리셋마다 이어서 작업합니다.'}] + [
+        {'key': n, 'label': f'{n}회', 'detail': f'리셋 후 {n}번 이어서 작업하고, 그다음 한도가 떨어지면 일시정지합니다.'} for n in (1, 2, 3)] + [
+        {'key': 0, 'label': '0회', 'detail': '한도가 떨어지면 기다리지 않고 바로 일시정지합니다.'},
+        {'key': 'custom', 'label': '직접 입력', 'detail': '0 이상의 숫자를 입력합니다.'}])
+    if picked is None:
+        return
+    times = picked['key']
+    if times == 'custom':
+        value = input('자동 재개 횟수 (빈칸: 취소): ').strip()
+        if not value:
+            return
+        times = int(value)
+    update_auto_resume(store, sid, times)
+
+
 def choose_model(store, sid):
     job = store.get(sid)
     print('Codex 모델 목록을 불러오는 중…')
@@ -433,6 +456,8 @@ def run_menu(store):
                         update_prompt(store, sid, value)
                 elif action == 'model':
                     choose_model(store, sid)
+                elif action == 'times':
+                    choose_times(store, sid)
                 elif action == 'name':
                     print('현재 이름: ' + (store.get(sid).get('name') or '(없음)'))
                     value = input('새 이름 (빈칸: 취소): ')

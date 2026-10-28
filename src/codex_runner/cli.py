@@ -38,6 +38,8 @@ BUDGET_LIMIT_STATES = {
     'workspace_owner_usage_limit_reached', 'workspace_member_usage_limit_reached',
 }
 PROMPT = '이전에 하던 작업 이어서 해줘'
+# Wait details written for quota waits, as opposed to overload or external-turn waits.
+QUOTA_WAIT_REASONS = ('Subscription quota unavailable', 'Account limit', 'Codex reported usageLimitExceeded')
 # `codex exec --json` reports a model capacity failure only as this fixed message.
 OVERLOAD_MESSAGE = 'Selected model is at capacity'
 
@@ -418,11 +420,36 @@ class Worker:
         self.wait_reasons[job['id']] = 'Codex reported ' + info + '; retrying'
         return time.time() + min(300 * 2 ** retries, 1800)
 
-    def schedule_wait(self, job, when):
+    def schedule_wait(self, job, when, quota=True):
         reason = self.wait_reasons.get(job['id'], 'Subscription quota unavailable')
+        values = {}
+        if quota:
+            current = self.store.get(job['id'])
+            limit = current.get('max_quota_resumes')
+            # Polling within one quota wait is not another resume; only a new exhaustion counts.
+            if not current.get('quota_waiting') and limit is not None and current.get('quota_resumes', 0) >= limit:
+                detail = f'Quota ran out after {limit} automatic resume(s); paused until resumed by hand'
+                self.store.patch(job['id'], expected=['running'], status='paused', next_run=0, detail=detail, pid=None)
+                self.note(job, detail)
+                return
+            values.update(quota_waiting=True, resume_turn_counted=False)
         self.store.patch(job['id'], expected=['running'], status='waiting', next_run=when,
-                         detail=reason + '; next check ' + stamp(when), pid=None)
+                         detail=reason + '; next check ' + stamp(when), pid=None, **values)
         self.note(job, reason + '; next check ' + stamp(when))
+
+    def quota_ready(self, job):
+        # The quota wait is over: this turn is one automatic resume.
+        current = self.store.get(job['id'])
+        if current.get('quota_waiting'):
+            self.store.patch(job['id'], quota_waiting=False, quota_resumes=current.get('quota_resumes', 0) + 1,
+                             resume_turn_counted=True)
+
+    def quota_refused(self, job):
+        # The quota endpoint lagged and Codex refused the turn: still the same wait, not a used resume.
+        current = self.store.get(job['id'])
+        if current.get('resume_turn_counted'):
+            self.store.patch(job['id'], quota_waiting=True, resume_turn_counted=False,
+                             quota_resumes=max(0, current.get('quota_resumes', 0) - 1))
 
     def finish(self, job, result, waiting_for=None):
         if result.get('status') not in ('complete', 'continue', 'blocked') or not isinstance(result.get('summary'), str):
@@ -438,7 +465,7 @@ class Worker:
         if waiting_for and status in ('queued', 'complete'):
             status, detail = 'waiting', waiting_for
         self.store.patch(job['id'], expected=['running'], wake_for_input=True, status=status, summary=summary,
-                         same_summary_count=repeats, detail=detail, overload_retries=0, next_run=time.time() + (15 if status == 'waiting' else 2),
+                         same_summary_count=repeats, detail=detail, overload_retries=0, resume_turn_counted=False, next_run=time.time() + (15 if status == 'waiting' else 2),
                          turns=current.get('turns', 0) + 1, pid=None, managed_turn_id=None)
         self.note(job, status + ': ' + detail)
 
@@ -463,6 +490,7 @@ class Worker:
                 return
             if self.stopping.is_set() or self.store.get(job['id']).get('pause_requested'):
                 return
+            self.quota_ready(job)
             directory = private_dir(self.store.base / 'jobs' / job['id'])
             schema = directory / 'output-schema.json'
             schema.write_text(json.dumps(SCHEMA))
@@ -514,10 +542,11 @@ class Worker:
                         overloaded = overloaded or OVERLOAD_MESSAGE in message
             if proc.returncode or terminal == 'turn.failed':
                 when = self.capacity(job, refresh=True)
+                quota = bool(when)
                 if not when and overloaded:
                     when = self.overload_wait(job, 'serverOverloaded')
                 if when:
-                    self.schedule_wait(job, when)
+                    self.schedule_wait(job, when, quota)
                     return
             if proc.returncode:
                 raise RunnerError('Codex exited with code ' + str(proc.returncode) + '; inspect logs before resuming')
@@ -680,6 +709,23 @@ def update_model(store, sid, model=None, effort=None, reset=False, models=None):
     return store.patch(sid, **values) if values else store.get(sid)
 
 
+def update_auto_resume(store, sid, times=None):
+    """Limit automatic resumes after quota resets; None means until the task completes."""
+    if times is not None and times < 0:
+        raise RunnerError('--times must be 0 or more')
+    job = store.get(sid)
+    values = dict(max_quota_resumes=times)
+    # A quota wait that began before this setting existed still counts as the current wait.
+    if job['status'] == 'waiting' and (job.get('detail') or '').startswith(QUOTA_WAIT_REASONS):
+        values['quota_waiting'] = True
+    return store.patch(sid, **values)
+
+
+def auto_resume_text(job):
+    limit = job.get('max_quota_resumes')
+    return f"{job.get('quota_resumes', 0)}/{'unlimited' if limit is None else limit}"
+
+
 def model_lines(models):
     width = max([len(m['model']) for m in models] + [5]) + 2
     lines = ['MODEL'.ljust(width) + 'EFFORTS (* = default)']
@@ -753,6 +799,9 @@ def control_job(store, sid, action, continue_completed=False, confirm=None):
     else:
         values = dict(status='paused' if action == 'pause' else 'queued', next_run=0,
                       pause_requested=False, detail='Paused by user' if action == 'pause' else 'Resumed by user')
+        if action == 'resume':
+            # A manual resume starts a fresh allowance of automatic quota resumes.
+            values.update(quota_resumes=0, quota_waiting=False)
         values.update(preflight)
         current = store.patch(sid, expected=['queued', 'waiting', 'idle', 'paused', 'complete', 'blocked', 'error'], **values)
         if current['status'] == 'running':
@@ -777,6 +826,7 @@ def cli(argv=None):
     add.add_argument('--codex')
     add.add_argument('--model')
     add.add_argument('--effort', help='Reasoning effort for runner turns, for example low, medium, high or xhigh')
+    add.add_argument('--auto-resume-times', type=int, help='Resume automatically after at most this many quota resets (default: until complete)')
     add.add_argument('--limit-id', default='codex')
     add.add_argument('--sandbox', choices=['read-only', 'workspace-write', 'danger-full-access'], default='workspace-write')
     add.add_argument('--network', action='store_true', help='Allow network access inside workspace-write (for example a local browser debugging port)')
@@ -802,6 +852,11 @@ def cli(argv=None):
     model.add_argument('--model', help='Model for runner turns')
     model.add_argument('--effort', help='Reasoning effort for runner turns, for example low, medium, high or xhigh')
     model.add_argument('--reset', action='store_true', help="Stop overriding both; Codex keeps the session's last settings")
+    auto = sub.add_parser('auto-resume', help='Read or limit how many times work resumes after quota resets')
+    auto.add_argument('session_id', nargs='?')
+    auto_options = auto.add_mutually_exclusive_group()
+    auto_options.add_argument('--times', type=int, help='Pause instead of waiting once quota has run out after this many automatic resumes')
+    auto_options.add_argument('--unlimited', action='store_true', help='Keep resuming after every reset until the task completes (default)')
     status = sub.add_parser('status'); status.add_argument('--json', action='store_true')
     logs = sub.add_parser('logs'); logs.add_argument('session_id', nargs='?')
     logs.add_argument('--lines', type=int, default=60, help='Recent readable lines (raw mode: lines per file)')
@@ -838,7 +893,7 @@ def cli(argv=None):
     if not WINDOWS and os.geteuid() == 0:
         raise RunnerError('Run as your Codex login user, not root; sudo is only needed to install the package')
     store = Store(args.state_dir)
-    if args.command in ('pause', 'resume', 'remove', 'prompt', 'logs', 'alias', 'send') or (
+    if args.command in ('pause', 'resume', 'remove', 'prompt', 'auto-resume', 'logs', 'alias', 'send') or (
             args.command == 'model' and not (args.list and args.session_id is None)):
         args.session_id = select_session(store, args.session_id)
     if args.command in (None, 'menu', 'ui'):
@@ -848,12 +903,14 @@ def cli(argv=None):
         cwd = str(Path(args.cwd).expanduser().resolve(strict=True))
         if not Path(cwd).is_dir():
             raise RunnerError('--cwd must be a directory')
+        if args.auto_resume_times is not None and args.auto_resume_times < 0:
+            raise RunnerError('--auto-resume-times must be 0 or more')
         if (args.network or args.git_write) and args.sandbox != 'workspace-write':
             raise RunnerError('--network and --git-write apply only to --sandbox workspace-write')
         name = validate_name(args.name) if args.name else default_name(store, cwd, args.session_id)
         job = dict(id=args.session_id, cwd=cwd, codex=resolve_codex(args.codex), path=os.environ.get('PATH', ''),
                    codex_home=str(Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))).expanduser().absolute()),
-                   model=args.model, effort=args.effort, limit_id=args.limit_id, sandbox=args.sandbox, network=args.network, git_write=args.git_write, managed=args.managed, name=name, status='queued',
+                   model=args.model, effort=args.effort, max_quota_resumes=args.auto_resume_times, limit_id=args.limit_id, sandbox=args.sandbox, network=args.network, git_write=args.git_write, managed=args.managed, name=name, status='queued',
                    created=time.time(), updated=time.time(), next_run=0, turns=0,
                    prompt=PROMPT + ('\nAdditional instructions:\n' + Path(args.prompt_file).read_text(encoding='utf-8') if args.prompt_file else ''))
         probe_codex(job)
@@ -887,6 +944,12 @@ def cli(argv=None):
         print('effort:', job.get('effort') or "(session's last setting)")
         if changed:
             print('Updated; applies on the next turn. Execution state is unchanged.')
+    elif args.command == 'auto-resume':
+        job = store.get(args.session_id)
+        if args.times is not None or args.unlimited:
+            job = update_auto_resume(store, args.session_id, args.times)
+            print('Updated; execution state is unchanged.')
+        print('automatic quota resumes used/limit:', auto_resume_text(job))
     elif args.command in ('pause', 'resume'):
         control_job(store, args.session_id, args.command, getattr(args, 'continue_completed', False))
         print(args.command, args.session_id)
