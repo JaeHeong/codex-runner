@@ -322,13 +322,27 @@ def inspect_latest(server, job):
                 preview=finals[-1][:500] if finals else '(No final answer available)')
 
 
+def start_daemon(job):
+    """Start the shared Codex daemon if it is not running; returns its error text, or None."""
+    started = subprocess.run(codex_command(job['codex'], 'app-server', 'daemon', 'start'),
+                             env=child_env(job), capture_output=True, timeout=45, **no_console_options())
+    return (started.stderr or b'').decode('utf-8', errors='replace') if started.returncode else None
+
+
 def resume_preflight(store, job, allow_completed=False, confirm=None):
     """Check before queuing as well as inside the worker; never starts a turn."""
     if not job.get('managed') or job.get('managed_turn_id'):
         if job['status'] == 'complete' and not allow_completed:
             raise RunnerError('Task is already complete; use --continue-completed only to explicitly continue it')
         return {}
-    server = LocalServer(job.get('codex_home') or str(Path.home() / '.codex'))
+    home = job.get('codex_home') or str(Path.home() / '.codex')
+    try:
+        server = LocalServer(home)
+    except (FileNotFoundError, ConnectionRefusedError):
+        # The daemon may have been stopped, for example to open the session in the Codex app.
+        if start_daemon(job) is not None:
+            raise RunnerError('Could not start the local managed Codex daemon; inspect codex app-server daemon') from None
+        server = LocalServer(home)
     try:
         # A manual Resume authorizes retry of a stopped turn. Automatic idle
         # observation, by contrast, only retries confirmed quota failures.
@@ -392,10 +406,8 @@ def run_managed(worker, job):
             # restart a responding server or start a second session writer.
             if worker.stopping.is_set():
                 return
-            started = subprocess.run(codex_command(job['codex'], 'app-server', 'daemon', 'start'),
-                                     env=child_env(job), capture_output=True, timeout=45, **no_console_options())
-            if started.returncode:
-                reason = (started.stderr or b'').decode('utf-8', errors='replace')
+            reason = start_daemon(job)
+            if reason is not None:
                 if WINDOWS and any(text in reason for text in (
                         'non-elevated terminal', 'prevents background processes from outliving it')):
                     store.patch(sid, expected=['running'], status='waiting', next_run=time.time() + 30,

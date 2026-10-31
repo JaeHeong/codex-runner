@@ -116,6 +116,18 @@ class ManagedTests(unittest.TestCase):
         self.assertEqual(self.run_job()['status'], 'waiting')
         self.assertFalse(any(m == 'turn/start' for m, p in self.calls))
 
+    def test_manual_resume_starts_a_stopped_daemon_before_its_check(self):
+        with patch('codex_runner.managed.LocalServer', side_effect=[FileNotFoundError(), self.server]), \
+                patch('codex_runner.managed.subprocess.run') as start:
+            start.return_value.returncode = 0
+            control_job(self.store, self.job['id'], 'resume')
+        self.assertEqual(start.call_args.args[0][-3:], ['app-server', 'daemon', 'start'])
+        self.assertFalse(any(m == 'turn/start' for m, p in self.calls))
+        with patch('codex_runner.managed.LocalServer', side_effect=FileNotFoundError()), \
+                patch('codex_runner.managed.subprocess.run') as start, self.assertRaisesRegex(RunnerError, 'daemon'):
+            start.return_value.returncode, start.return_value.stderr = 1, b'failed'
+            control_job(self.store, self.job['id'], 'resume')
+
     def test_completed_task_is_detected_without_sending_a_message(self):
         self.latest_turn = copy.deepcopy(self.turn)
         job = self.run_job()
