@@ -101,6 +101,7 @@ multiline messages are shown on one line with an ellipsis. Widening the terminal
 reveals more text; E / Prompt displays and edits the complete stored message.
 M / Model picks the model and reasoning effort from the list Codex offers;
 T / Times limits automatic resumes after quota resets.
+C / Coupons lists reset coupons and uses the one you pick after a confirmation.
 
 The menu needs an interactive terminal, Python's standard `curses` module, and
 at least 64 columns by 20 rows. Mouse use depends on terminal forwarding; arrow
@@ -141,7 +142,27 @@ account limits, with remaining-capacity bars and local reset times. It refreshes
 in the background every 30 seconds while the menu is open; F5 requests a refresh.
 With no registrations, it uses the current shell's Codex executable and CODEX_HOME.
 These are metadata requests only: opening the menu does not start a model turn,
-resume work, or change the daemon's existing wait timer.
+resume work, or change the daemon's existing wait timer. The last line counts
+available reset coupons.
+
+### Reset coupons
+
+Codex sometimes grants reset coupons (reset credits) that clear the five-hour and
+weekly limits once. Runner lists them and spends one only when you ask:
+
+```sh
+codex-runner coupons
+codex-runner coupons --use
+codex-runner coupons --use 2
+```
+
+The first command lists each available coupon with its number, title, expiry and
+ID; `codex-runner limits` also prints the count. `--use` asks which coupon when
+several are listed (by number or ID), shows the current usage, and asks
+`Really use this coupon now?`. Anything but `y` cancels, as does running without a
+terminal; `--yes` skips the question for scripts. If no limit can be reset, Codex
+keeps the coupon. After a reset, sessions waiting on quota check again at once
+instead of at the old reset time. Runner never uses a coupon on its own.
 The session table shows `checking` while managed preflight/quota checks run;
 `running` identifies a turn the Runner actually owns.
 
@@ -600,7 +621,7 @@ tmux new -s codex-runner 'codex-runner daemon'
   Unknown buckets stop the job instead of guessing.
 - `--model` and `--effort` overrides are optional. Without them, Codex's normal
   session/config selection applies. The runner never switches models or accounts to evade limits,
-  consumes earned reset credits, or automatically purchases credits.
+  consumes earned reset credits without `coupons --use`, or automatically purchases credits.
 - API-key authentication does not substitute for a missing ChatGPT login.
 - Version 0.2.1 fixes a missed-resume bug: workspace credit/usage limits previously
   became permanent `error` registrations, even if the allowance recovered later.

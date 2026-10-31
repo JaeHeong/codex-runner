@@ -178,6 +178,21 @@ class NamesTests(unittest.TestCase):
         self.assertIsNone(self.store.get(SID1)['max_quota_resumes'])
         self.assertNotEqual(self.command('auto-resume', 'tech', '--times', '-1').returncode, 0)
 
+    def test_coupon_picker_lists_coupons_and_cancel_keeps_them(self):
+        from codex_runner.menu import choose_coupon
+        credits = [{'id': 'c1', 'status': 'available', 'title': 'Full reset', 'expiresAt': None},
+                   {'id': 'c2', 'status': 'available', 'title': 'Weekly reset', 'expiresAt': None}]
+        data = {'rateLimitResetCredits': {'availableCount': 2, 'credits': credits}}
+        with patch('codex_runner.menu.read_limits', return_value=data), patch('builtins.input', return_value=''), \
+             patch('codex_runner.menu.use_reset_credit', return_value='reset') as use, \
+             patch('codex_runner.menu.choose', side_effect=[{'key': credits[1], 'label': 'Weekly reset'}, {'key': False}]) as pick:
+            choose_coupon(self.store, SID1)
+            self.assertEqual([c['label'] for c in pick.call_args_list[0].args[1]], ['Full reset', 'Weekly reset'])
+            use.assert_not_called()
+            pick.side_effect = [{'key': credits[1], 'label': 'Weekly reset'}, {'key': True}]
+            choose_coupon(self.store, SID1)
+            self.assertEqual(use.call_args.args[1], 'c2')
+
     def test_add_browser_registers_selected_history_paused(self):
         folder = self.base / 'new-project'; folder.mkdir()
         thread = {'id': '01a151c9-b419-73f3-8fd2-119ba622ac45', 'cwd': str(folder), 'name': '테스트 작업', 'updatedAt': 123}

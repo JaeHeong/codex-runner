@@ -237,6 +237,84 @@ def read_models(job, timeout=30):
     return query_app_server(job, work, timeout)
 
 
+def reset_credits(data):
+    """Available reset coupons; the backend may list fewer rows than it counts, or none."""
+    summary = data.get('rateLimitResetCredits') or {}
+    credits = [c for c in summary.get('credits') or [] if c.get('status') == 'available']
+    return summary.get('availableCount', len(credits)), credits
+
+
+def use_reset_credit(job, credit_id=None, timeout=30):
+    """Spend one reset coupon. One idempotency key per attempt keeps a retried request to one coupon."""
+    params = {'idempotencyKey': str(uuid.uuid4())}
+    if credit_id:
+        params['creditId'] = credit_id
+    return query_app_server(job, lambda rpc: rpc('account/rateLimitResetCredit/consume', params), timeout)['outcome']
+
+
+def credit_lines(count, credits):
+    lines = []
+    for number, credit in enumerate(credits, 1):
+        expires = credit.get('expiresAt')
+        lines.append(f"{number}. {credit.get('title') or 'Reset coupon'} · "
+                     + ('expires ' + stamp(expires) if expires else 'no expiry') + ' · ' + credit['id'])
+    if count > len(credits):
+        lines.append(f'{count - len(credits)} more available; Codex did not list their details')
+    return lines
+
+
+def wake_quota_waits(store):
+    # Quota waits sleep until the old reset time; after a coupon they should check again now.
+    for job in store.jobs():
+        if job['status'] == 'waiting' and job.get('quota_waiting'):
+            store.patch(job['id'], expected=['waiting'], next_run=time.time())
+
+
+def coupon_command(store, args, ask=input):
+    def answer(question):
+        # No terminal to answer means no consent: never spend a coupon by default.
+        try:
+            return ask(question).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return ''
+    job = dict(codex=resolve_codex(args.codex), path=os.environ.get('PATH', ''), codex_home=os.environ.get('CODEX_HOME'))
+    data = read_limits(job)
+    count, credits = reset_credits(data)
+    print(f'Reset coupons available: {count}')
+    for line in credit_lines(count, credits):
+        print('  ' + line)
+    if args.use is None or not count:
+        return
+    choice = args.use
+    if not choice and len(credits) > 1:
+        choice = answer('Which coupon? Number or ID (blank: cancel): ')
+        if not choice:
+            print('Cancelled; no coupon was used')
+            return
+    credit = credits[0] if not choice and credits else None
+    if choice:
+        credit = (credits[int(choice) - 1] if choice.isdigit() and 0 < int(choice) <= len(credits)
+                  else next((c for c in credits if c['id'] == choice), None))
+        if credit is None:
+            raise RunnerError('No available coupon matches ' + choice)
+    snapshot = select_limit(data, 'codex')
+    used = ', '.join(f"{label} {w['usedPercent']:.0f}% used" for label, w in
+                     (('5h', snapshot.get('primary')), ('weekly', snapshot.get('secondary'))) if w)
+    name = credit.get('title') if credit else 'the next available coupon'
+    print(f'About to use: {name or "Reset coupon"}' + (f' (now {used})' if used else ''))
+    if not args.yes and answer('Really use this coupon now? It cannot be undone. [y/N]: ').lower() not in ('y', 'yes'):
+        print('Cancelled; no coupon was used')
+        return
+    outcome = use_reset_credit(job, credit and credit['id'])
+    print({'reset': 'Coupon used; the eligible limits were reset.',
+           'nothingToReset': 'Nothing to reset right now; Codex kept the coupon.',
+           'noCredit': 'Codex reports no coupon left to use.',
+           'alreadyRedeemed': 'This attempt was already redeemed.'}.get(outcome, 'Codex returned: ' + str(outcome)))
+    if outcome == 'reset':
+        wake_quota_waits(store)
+
+
 def query_app_server(job, work, timeout=30):
     proc = subprocess.Popen(codex_command(job['codex'], 'app-server'), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -889,6 +967,11 @@ def cli(argv=None):
     service.add_argument('--no-start', action='store_true', help='Register the service without starting it (install only)')
     for name in ['limits', 'doctor']:
         p = sub.add_parser(name); p.add_argument('--codex'); p.add_argument('--limit-id', default='codex')
+    coupons = sub.add_parser('coupons', help='List reset coupons (reset credits) and use one after confirmation')
+    coupons.add_argument('--codex')
+    coupons.add_argument('--use', nargs='?', const='', metavar='NUMBER_OR_ID',
+                         help='Use a coupon: its list number or ID; asks which one when several are listed')
+    coupons.add_argument('--yes', action='store_true', help='Skip the confirmation question')
     args = parser.parse_args(argv)
     if not WINDOWS and os.geteuid() == 0:
         raise RunnerError('Run as your Codex login user, not root; sudo is only needed to install the package')
@@ -980,9 +1063,12 @@ def cli(argv=None):
         # Print quota metadata only, never account identities or credentials.
         print(json.dumps({'codex': job['codex'], 'limit_id': args.limit_id,
                           'primary': snapshot.get('primary'), 'secondary': snapshot.get('secondary'),
-                          'retry_at': stamp(when) if when else None, 'version': __version__}, indent=2))
+                          'retry_at': stamp(when) if when else None, 'reset_coupons': reset_credits(data)[0],
+                          'version': __version__}, indent=2))
         if args.command == 'doctor':
             print('CLI capabilities and ChatGPT quota access OK. No model request was made.')
+    elif args.command == 'coupons':
+        coupon_command(store, args)
     elif args.command == 'send':
         from .remote import enqueue_input
         identity = 'cli:' + str(uuid.uuid4())

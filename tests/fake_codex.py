@@ -25,7 +25,23 @@ elif sys.argv[1] == 'app-server':
             snapshot = {'limitId': 'codex', 'primary': {'usedPercent': data.get('used', 0),
                         'windowDurationMins': 300, 'resetsAt': data.get('reset', time.time() + 90)},
                         'secondary': data.get('secondary'), 'rateLimitReachedType': data.get('limit_type')}
-            result = {'rateLimits': snapshot}
+            result = {'rateLimits': snapshot, 'rateLimitResetCredits': data.get('coupons')}
+        elif method == 'account/rateLimitResetCredit/consume':
+            data = load()
+            coupons = data.get('coupons') or {'availableCount': 0, 'credits': []}
+            data.setdefault('consumed', []).append(msg['params'])
+            if not coupons['availableCount']:
+                outcome = 'noCredit'
+            elif data.get('used', 0) == 0:
+                outcome = 'nothingToReset'
+            else:
+                wanted = msg['params'].get('creditId')
+                coupons['credits'] = [c for c in coupons.get('credits') or [] if wanted and c['id'] != wanted] if wanted else (coupons.get('credits') or [])[1:]
+                coupons['availableCount'] -= 1
+                data.update(coupons=coupons, used=0, limit_type=None)
+                outcome = 'reset'
+            state.write_text(json.dumps(data))
+            result = {'outcome': outcome}
         elif method == 'model/list':
             result = {'data': load().get('models', [
                 {'model': 'gpt-test', 'isDefault': True, 'hidden': False, 'defaultReasoningEffort': 'medium',

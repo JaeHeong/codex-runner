@@ -111,6 +111,8 @@ class UsageTests(unittest.TestCase):
         self.assertIn('67% left', lines[2])
         self.assertIn('95% left', lines[3])
         self.assertIn('~', lines[1])
+        self.assertEqual(len(lines), 4)
+        self.assertIn('Reset coupons: 1', usage_lines({'fetched_at': time.time(), 'limits': {}, 'coupons': 1})[-1])
 
     def test_context_failure_does_not_hide_working_account_limits(self):
         data = {'rateLimits': {'limitId': 'codex', 'primary': {'usedPercent': 20}}}

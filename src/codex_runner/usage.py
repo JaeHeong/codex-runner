@@ -5,7 +5,7 @@ import threading
 import time
 
 from .catalog import last_context
-from .cli import RunnerError, read_limits, select_limit
+from .cli import RunnerError, read_limits, reset_credits, select_limit
 
 
 def identity(job):
@@ -15,7 +15,9 @@ def identity(job):
 def snapshot(job):
     result = {'fetched_at': time.time()}
     try:
-        result['limits'] = select_limit(read_limits(job), job.get('limit_id', 'codex'))
+        data = read_limits(job)
+        result['limits'] = select_limit(data, job.get('limit_id', 'codex'))
+        result['coupons'] = reset_credits(data)[0]
     except (RunnerError, OSError, ValueError) as exc:
         result['limits_error'] = str(exc)
     if job.get('id'):
@@ -69,6 +71,7 @@ class UsagePoller:
                 old = self.cache.get(identity(job), {})
                 if value.get('limits_error') and old.get('limits'):
                     value['limits'] = old['limits']
+                    value['coupons'] = old.get('coupons')
                     value['limits_at'] = old.get('limits_at', old['fetched_at'])
                 else:
                     value['limits_at'] = value['fetched_at']
@@ -120,4 +123,6 @@ def usage_lines(value):
     label = '5h limit' if minutes in (None, 300) else f'{minutes}m limit'
     lines.append(limit_line(label, primary))
     lines.append(limit_line('Weekly limit', limits.get('secondary'), True))
+    if value.get('coupons') is not None:
+        lines.append(f"Reset coupons: {value['coupons']} available · C: 사용")
     return lines

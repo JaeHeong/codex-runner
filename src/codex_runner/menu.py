@@ -4,11 +4,13 @@ import sys
 import time
 import unicodedata
 
-from .cli import RunnerError, control_job, read_models, update_auto_resume, update_model, update_prompt
+from .cli import (RunnerError, control_job, credit_lines, read_limits, read_models, reset_credits, update_auto_resume,
+                  update_model, update_prompt, use_reset_credit, wake_quota_waits)
 from .logview import LABELS, clean
 
 ACTIONS = [('add', '[A Add]'), ('delete', '[D Delete]'), ('logs', '[L Logs]'), ('resume', '[R Resume]'), ('pause', '[P Pause]'),
-           ('name', '[N Name]'), ('prompt', '[E Prompt]'), ('model', '[M Model]'), ('times', '[T Times]'), ('quit', '[Q Quit]')]
+           ('name', '[N Name]'), ('prompt', '[E Prompt]'), ('model', '[M Model]'), ('times', '[T Times]'),
+           ('coupons', '[C Coupons]'), ('quit', '[Q Quit]')]
 
 
 def cell_width(text):
@@ -161,7 +163,7 @@ def screen(win, store, select_only=False, initial_sid=None, usage=None):
             for i, (action, text, x, y) in enumerate(button_layout(w, h - 5)):
                 draw(win, y, x, text, w - x - 1, curses.A_REVERSE if i == action_index else 0)
                 buttons.append((action, x, x + len(text), y))
-        draw(win, h - 2, 2, 'A 추가 · D 등록해제 · N 이름 · E 문구 · M 모델 · T 횟수 · L 로그 · R 재개 · P 중지 · F5 한도갱신', w - 4)
+        draw(win, h - 2, 2, 'A 추가 · D 등록해제 · N 이름 · E 문구 · M 모델 · T 횟수 · C 쿠폰 · L 로그 · R 재개 · P 중지 · F5 한도갱신', w - 4)
         win.refresh()
         key = win.getch()
         action = None
@@ -178,7 +180,7 @@ def screen(win, store, select_only=False, initial_sid=None, usage=None):
         elif key == curses.KEY_LEFT:
             action_index = (action_index - 1) % len(ACTIONS)
         elif key in (10, 13, curses.KEY_ENTER):
-            if jobs or (not select_only and ACTIONS[action_index][0] in ('add', 'quit')):
+            if jobs or (not select_only and ACTIONS[action_index][0] in ('add', 'coupons', 'quit')):
                 if not select_only and ACTIONS[action_index][0] == 'quit':
                     return None
                 return selected if select_only else (ACTIONS[action_index][0], selected)
@@ -198,12 +200,12 @@ def screen(win, store, select_only=False, initial_sid=None, usage=None):
             except curses.error:
                 pass
         elif not select_only:
-            action = {'a': 'add', 'd': 'delete', 'l': 'logs', 'r': 'resume', 'p': 'pause', 'n': 'name', 'e': 'prompt', 'm': 'model', 't': 'times'}.get(chr(key).lower() if 0 <= key < 256 else '')
+            action = {'a': 'add', 'd': 'delete', 'l': 'logs', 'r': 'resume', 'p': 'pause', 'n': 'name', 'e': 'prompt', 'm': 'model', 't': 'times', 'c': 'coupons'}.get(chr(key).lower() if 0 <= key < 256 else '')
         if key == curses.KEY_F5 and usage and environment:
             usage.request(environment, force=True)
         if action == 'quit':
             return None
-        if action and (jobs or action == 'add') and not select_only:
+        if action and (jobs or action in ('add', 'coupons')) and not select_only:
             return action, selected
 
 
@@ -420,6 +422,38 @@ def choose_model(store, sid):
     update_model(store, sid, model=name, effort=None if effort['key'] is keep else effort['key'], models=models)
 
 
+def choose_coupon(store, sid):
+    from .catalog import account_job
+    job = store.get(sid) if sid else account_job()
+    print('리셋 쿠폰을 불러오는 중…')
+    count, credits = reset_credits(read_limits(job))
+    if not count:
+        print('사용할 수 있는 리셋 쿠폰이 없습니다.')
+        input('Enter: 메뉴로 돌아가기 ')
+        return
+    lines = credit_lines(count, credits)
+    choices = [{'key': c, 'label': c.get('title') or '리셋 쿠폰', 'detail': line} for c, line in zip(credits, lines)]
+    if count > len(credits):
+        choices.append({'key': None, 'label': '다음 사용 가능한 쿠폰', 'detail': lines[-1]})
+    picked = choose(f'Coupons · 사용 가능 {count}장 · 쓸 쿠폰 선택 (Q: 취소)', choices)
+    if picked is None:
+        return
+    credit = picked['key']
+    sure = choose('정말 이 쿠폰을 지금 쓸까요? 되돌릴 수 없습니다', [
+        {'key': False, 'label': '취소 (기본)', 'detail': '쿠폰을 쓰지 않고 메뉴로 돌아갑니다.'},
+        {'key': True, 'label': '사용 · ' + picked['label'], 'detail': '지금 5시간·주간 한도 중 리셋 대상이 초기화됩니다.'}])
+    if not sure or not sure['key']:
+        return
+    outcome = use_reset_credit(job, credit and credit['id'])
+    if outcome == 'reset':
+        wake_quota_waits(store)
+    print({'reset': '쿠폰을 썼습니다. 한도가 초기화됐습니다.',
+           'nothingToReset': '지금은 초기화할 한도가 없어서 쿠폰이 그대로 남아 있습니다.',
+           'noCredit': 'Codex에 남은 쿠폰이 없습니다.',
+           'alreadyRedeemed': '이미 처리된 사용 요청입니다.'}.get(outcome, 'Codex 응답: ' + str(outcome)))
+    input('Enter: 메뉴로 돌아가기 ')
+
+
 def confirm_completed(decision):
     selected = choose('Resume · 마지막 턴이 이미 끝났습니다', [
         {'key': 'cancel', 'label': '문구 전송 없이 멈추기 (기본)', 'detail': decision.get('preview') or decision['detail']},
@@ -458,6 +492,8 @@ def run_menu(store):
                     choose_model(store, sid)
                 elif action == 'times':
                     choose_times(store, sid)
+                elif action == 'coupons':
+                    choose_coupon(store, sid)
                 elif action == 'name':
                     print('현재 이름: ' + (store.get(sid).get('name') or '(없음)'))
                     value = input('새 이름 (빈칸: 취소): ')

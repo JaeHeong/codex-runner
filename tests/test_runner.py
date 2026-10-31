@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -133,6 +135,51 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(changed.returncode, 0, changed.stderr)
         job = self.store.get(self.job['id'])
         self.assertEqual((job['model'], job['effort'], job['status']), ('gpt-test', 'high', 'queued'))
+
+    def coupons(self, use=None, yes=False, answers=()):
+        from argparse import Namespace
+        from codex_runner.cli import coupon_command
+        answers, asked, out = list(answers), [], io.StringIO()
+        def ask(question):
+            asked.append(question)
+            return answers.pop(0)
+        with contextlib.redirect_stdout(out):
+            coupon_command(self.store, Namespace(codex=str(FAKE), use=use, yes=yes), ask)
+        return out.getvalue(), asked, json.loads(self.fixture.read_text())
+
+    def test_coupons_are_listed_and_used_only_after_choice_and_confirmation(self):
+        credits = [{'id': f'RateLimitResetCredit_{n}', 'status': 'available', 'resetType': 'codexRateLimits',
+                    'grantedAt': 1, 'expiresAt': 1794008820 + n, 'title': f'Full reset {n}'} for n in (1, 2)]
+        self.configure(used=100, coupons={'availableCount': 2, 'credits': credits})
+        text, asked, data = self.coupons()
+        self.assertIn('Reset coupons available: 2', text)
+        self.assertIn('2. Full reset 2', text)
+        self.assertEqual((asked, data.get('consumed')), ([], None))
+        text, asked, data = self.coupons(use='', answers=['2', 'n'])
+        self.assertEqual(len(asked), 2)
+        self.assertIn('no coupon was used', text)
+        self.assertIsNone(data.get('consumed'))
+        self.store.patch(self.job['id'], status='waiting', next_run=time.time() + 9999, quota_waiting=True)
+        text, asked, data = self.coupons(use='', answers=['2', 'y'])
+        self.assertIn('Coupon used', text)
+        self.assertEqual(data['consumed'][0]['creditId'], 'RateLimitResetCredit_2')
+        self.assertTrue(data['consumed'][0]['idempotencyKey'])
+        self.assertEqual([c['id'] for c in data['coupons']['credits']], ['RateLimitResetCredit_1'])
+        self.assertLessEqual(self.store.get(self.job['id'])['next_run'], time.time())
+
+    def test_single_coupon_still_asks_before_use_and_unused_coupon_is_reported(self):
+        self.configure(used=0, coupons={'availableCount': 1, 'credits': None})
+        text, asked, data = self.coupons(use='', answers=['y'])
+        self.assertEqual(len(asked), 1)
+        self.assertNotIn('creditId', data['consumed'][0])
+        self.assertIn('Codex kept the coupon', text)
+        self.configure(coupons={'availableCount': 0, 'credits': []})
+        text, asked, data = self.coupons(use='')
+        self.assertIn('Reset coupons available: 0', text)
+        self.assertEqual((asked, data.get('consumed')), ([], None))
+        with self.assertRaisesRegex(RunnerError, 'No available coupon'):
+            self.configure(used=100, coupons={'availableCount': 1, 'credits': []})
+            self.coupons(use='7', yes=True)
 
     def test_network_and_git_write_options_require_workspace_write(self):
         from codex_runner.cli import cli
