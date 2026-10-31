@@ -4,8 +4,8 @@ import sys
 import time
 import unicodedata
 
-from .cli import (RunnerError, control_job, credit_lines, read_limits, read_models, reset_credits, update_auto_resume,
-                  update_model, update_prompt, use_reset_credit, wake_quota_waits)
+from .cli import (RunnerError, control_job, credit_lines, read_limits, read_models, reset_credits, update_auto_coupon,
+                  update_auto_resume, update_model, update_prompt, use_reset_credit, wake_quota_waits)
 from .logview import LABELS, clean
 
 ACTIONS = [('add', '[A Add]'), ('delete', '[D Delete]'), ('logs', '[L Logs]'), ('resume', '[R Resume]'), ('pause', '[P Pause]'),
@@ -129,7 +129,7 @@ def screen(win, store, select_only=False, initial_sid=None, usage=None):
             environment = job if job.get('codex') and job.get('codex_home') else None
             status = visible_status(job)
             label = '실행 전 상태 확인 중' if status == 'checking' else LABELS.get(status, status)
-            draw(win, h - 13, 2, '상태: ' + label + ' · 모델: ' + model_text(job) + ' · 자동 재개: ' + times_text(job) + ' · ' + (job.get('detail') or ''), w - 4)
+            draw(win, h - 13, 2, '상태: ' + label + ' · 모델: ' + model_text(job) + ' · 자동 재개: ' + times_text(job) + ' · 자동 쿠폰: ' + ('켜짐' if job.get('auto_coupon') else '꺼짐') + ' · ' + (job.get('detail') or ''), w - 4)
             draw(win, h - 11, 2, '문구: ' + (job.get('prompt') or ''), w - 4)
         else:
             draw(win, 5, 2, '등록된 세션이 없습니다. A / Add로 기존 Codex 세션을 선택하세요.', w - 4)
@@ -427,18 +427,27 @@ def choose_coupon(store, sid):
     job = store.get(sid) if sid else account_job()
     print('리셋 쿠폰을 불러오는 중…')
     count, credits = reset_credits(read_limits(job))
-    if not count:
+    lines = credit_lines(count, credits)
+    toggle = object()
+    choices = []
+    if sid:
+        on = store.get(sid).get('auto_coupon')
+        choices.append({'key': toggle, 'label': '자동 사용 ' + ('끄기 · 지금 켜짐' if on else '켜기 · 지금 꺼짐'),
+                        'detail': '이 세션에서 주간 한도가 다 떨어지면 만료가 가장 빠른 쿠폰부터 자동으로 씁니다.'})
+    choices += [{'key': c, 'label': c.get('title') or '리셋 쿠폰', 'detail': line} for c, line in zip(credits, lines)]
+    if count > len(credits):
+        choices.append({'key': None, 'label': '다음 사용 가능한 쿠폰', 'detail': lines[-1]})
+    if not choices:
         print('사용할 수 있는 리셋 쿠폰이 없습니다.')
         input('Enter: 메뉴로 돌아가기 ')
         return
-    lines = credit_lines(count, credits)
-    choices = [{'key': c, 'label': c.get('title') or '리셋 쿠폰', 'detail': line} for c, line in zip(credits, lines)]
-    if count > len(credits):
-        choices.append({'key': None, 'label': '다음 사용 가능한 쿠폰', 'detail': lines[-1]})
     picked = choose(f'Coupons · 사용 가능 {count}장 · 쓸 쿠폰 선택 (Q: 취소)', choices)
     if picked is None:
         return
     credit = picked['key']
+    if credit is toggle:
+        update_auto_coupon(store, sid, not on)
+        return
     sure = choose('정말 이 쿠폰을 지금 쓸까요? 되돌릴 수 없습니다', [
         {'key': False, 'label': '취소 (기본)', 'detail': '쿠폰을 쓰지 않고 메뉴로 돌아갑니다.'},
         {'key': True, 'label': '사용 · ' + picked['label'], 'detail': '지금 5시간·주간 한도 중 리셋 대상이 초기화됩니다.'}])

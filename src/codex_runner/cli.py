@@ -483,6 +483,43 @@ class Worker:
         data = self.quotas.read(job, refresh, self.stopping)
         if data is None:
             return None  # Shutdown: caller checks stopping before starting work.
+        when = self.quota_state(job, data)
+        if when and self.spend_coupon(job, data):
+            data = self.quotas.read(job, True, self.stopping)
+            if data is None:
+                return None
+            when = self.quota_state(job, data)
+        return when
+
+    def spend_coupon(self, job, data):
+        """With automatic coupons on, use the earliest-expiring one once the weekly limit is used up."""
+        current = self.store.get(job['id'])
+        weekly = select_limit(data, job['limit_id']).get('secondary') or {}
+        count, credits = reset_credits(data)
+        if not current.get('auto_coupon') or weekly.get('usedPercent', 0) < 100 or not count:
+            return False
+        limit = current.get('max_quota_resumes')
+        if not current.get('quota_waiting') and limit is not None and current.get('quota_resumes', 0) >= limit:
+            return False  # The resume allowance is used up: pause instead of spending a coupon.
+        if time.time() - current.get('coupon_tried_at', 0) < 1800:
+            return False  # One attempt per half hour, so an unusable coupon is not retried on every poll.
+        self.store.patch(job['id'], coupon_tried_at=time.time())
+        credit = min(credits, key=lambda c: c.get('expiresAt') or float('inf'), default=None)
+        name = (credit and credit.get('title')) or 'next available coupon'
+        try:
+            outcome = use_reset_credit(job, credit and credit['id'])
+        except RunnerError as exc:
+            self.note(job, 'Weekly limit used up; automatic coupon failed: ' + str(exc))
+            return False
+        self.note(job, 'Weekly limit used up; automatic coupon ' + name + ': ' + outcome)
+        if outcome != 'reset':
+            return False
+        # Like a quota wait that ended at once: the next turn uses one automatic resume.
+        self.store.patch(job['id'], quota_waiting=True)
+        wake_quota_waits(self.store)
+        return True
+
+    def quota_state(self, job, data):
         snapshot = select_limit(data, job['limit_id'])
         state = snapshot.get('rateLimitReachedType')
         if state in BUDGET_LIMIT_STATES or snapshot.get('spendControlReached') is True:
@@ -799,6 +836,15 @@ def update_auto_resume(store, sid, times=None):
     return store.patch(sid, **values)
 
 
+def update_auto_coupon(store, sid, enabled):
+    """Turn automatic coupon use on or off; a session already waiting on quota checks again now."""
+    job = store.get(sid)
+    values = dict(auto_coupon=enabled, coupon_tried_at=0)
+    if enabled and job['status'] == 'waiting' and job.get('quota_waiting'):
+        values['next_run'] = time.time()
+    return store.patch(sid, **values)
+
+
 def auto_resume_text(job):
     limit = job.get('max_quota_resumes')
     return f"{job.get('quota_resumes', 0)}/{'unlimited' if limit is None else limit}"
@@ -905,6 +951,7 @@ def cli(argv=None):
     add.add_argument('--model')
     add.add_argument('--effort', help='Reasoning effort for runner turns, for example low, medium, high or xhigh')
     add.add_argument('--auto-resume-times', type=int, help='Resume automatically after at most this many quota resets (default: until complete)')
+    add.add_argument('--auto-coupon', action='store_true', help='Use the earliest-expiring reset coupon when the weekly limit runs out')
     add.add_argument('--limit-id', default='codex')
     add.add_argument('--sandbox', choices=['read-only', 'workspace-write', 'danger-full-access'], default='workspace-write')
     add.add_argument('--network', action='store_true', help='Allow network access inside workspace-write (for example a local browser debugging port)')
@@ -935,6 +982,11 @@ def cli(argv=None):
     auto_options = auto.add_mutually_exclusive_group()
     auto_options.add_argument('--times', type=int, help='Pause instead of waiting once quota has run out after this many automatic resumes')
     auto_options.add_argument('--unlimited', action='store_true', help='Keep resuming after every reset until the task completes (default)')
+    auto_coupon = sub.add_parser('auto-coupon', help='Use the earliest-expiring reset coupon when the weekly limit runs out')
+    auto_coupon.add_argument('session_id', nargs='?')
+    auto_coupon_options = auto_coupon.add_mutually_exclusive_group()
+    auto_coupon_options.add_argument('--on', action='store_true', help='Use coupons automatically for this session')
+    auto_coupon_options.add_argument('--off', action='store_true', help='Never use coupons automatically (default)')
     status = sub.add_parser('status'); status.add_argument('--json', action='store_true')
     logs = sub.add_parser('logs'); logs.add_argument('session_id', nargs='?')
     logs.add_argument('--lines', type=int, default=60, help='Recent readable lines (raw mode: lines per file)')
@@ -976,7 +1028,7 @@ def cli(argv=None):
     if not WINDOWS and os.geteuid() == 0:
         raise RunnerError('Run as your Codex login user, not root; sudo is only needed to install the package')
     store = Store(args.state_dir)
-    if args.command in ('pause', 'resume', 'remove', 'prompt', 'auto-resume', 'logs', 'alias', 'send') or (
+    if args.command in ('pause', 'resume', 'remove', 'prompt', 'auto-resume', 'auto-coupon', 'logs', 'alias', 'send') or (
             args.command == 'model' and not (args.list and args.session_id is None)):
         args.session_id = select_session(store, args.session_id)
     if args.command in (None, 'menu', 'ui'):
@@ -993,7 +1045,7 @@ def cli(argv=None):
         name = validate_name(args.name) if args.name else default_name(store, cwd, args.session_id)
         job = dict(id=args.session_id, cwd=cwd, codex=resolve_codex(args.codex), path=os.environ.get('PATH', ''),
                    codex_home=str(Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))).expanduser().absolute()),
-                   model=args.model, effort=args.effort, max_quota_resumes=args.auto_resume_times, limit_id=args.limit_id, sandbox=args.sandbox, network=args.network, git_write=args.git_write, managed=args.managed, name=name, status='queued',
+                   model=args.model, effort=args.effort, max_quota_resumes=args.auto_resume_times, auto_coupon=args.auto_coupon, limit_id=args.limit_id, sandbox=args.sandbox, network=args.network, git_write=args.git_write, managed=args.managed, name=name, status='queued',
                    created=time.time(), updated=time.time(), next_run=0, turns=0,
                    prompt=PROMPT + ('\nAdditional instructions:\n' + Path(args.prompt_file).read_text(encoding='utf-8') if args.prompt_file else ''))
         probe_codex(job)
@@ -1033,6 +1085,12 @@ def cli(argv=None):
             job = update_auto_resume(store, args.session_id, args.times)
             print('Updated; execution state is unchanged.')
         print('automatic quota resumes used/limit:', auto_resume_text(job))
+    elif args.command == 'auto-coupon':
+        job = store.get(args.session_id)
+        if args.on or args.off:
+            job = update_auto_coupon(store, args.session_id, args.on)
+            print('Updated; execution state is unchanged.')
+        print('automatic coupon use when the weekly limit runs out:', 'on' if job.get('auto_coupon') else 'off')
     elif args.command in ('pause', 'resume'):
         control_job(store, args.session_id, args.command, getattr(args, 'continue_completed', False))
         print(args.command, args.session_id)

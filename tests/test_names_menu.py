@@ -187,11 +187,15 @@ class NamesTests(unittest.TestCase):
              patch('codex_runner.menu.use_reset_credit', return_value='reset') as use, \
              patch('codex_runner.menu.choose', side_effect=[{'key': credits[1], 'label': 'Weekly reset'}, {'key': False}]) as pick:
             choose_coupon(self.store, SID1)
-            self.assertEqual([c['label'] for c in pick.call_args_list[0].args[1]], ['Full reset', 'Weekly reset'])
+            self.assertEqual([c['label'] for c in pick.call_args_list[0].args[1]][1:], ['Full reset', 'Weekly reset'])
             use.assert_not_called()
             pick.side_effect = [{'key': credits[1], 'label': 'Weekly reset'}, {'key': True}]
             choose_coupon(self.store, SID1)
             self.assertEqual(use.call_args.args[1], 'c2')
+            pick.side_effect = lambda title, choices: choices[0]
+            choose_coupon(self.store, SID1)
+            self.assertTrue(self.store.get(SID1)['auto_coupon'])
+            self.assertEqual(use.call_count, 1)
 
     def test_add_browser_registers_selected_history_paused(self):
         folder = self.base / 'new-project'; folder.mkdir()

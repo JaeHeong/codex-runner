@@ -235,6 +235,52 @@ class ExecutionTests(unittest.TestCase):
         job = self.store.get(sid)
         self.assertEqual((job['status'], job['quota_resumes'], job['quota_waiting']), ('queued', 0, False))
 
+    def weekly_out(self, **data):
+        credits = [{'id': 'late', 'status': 'available', 'expiresAt': time.time() + 9000, 'title': 'Late'},
+                   {'id': 'soon', 'status': 'available', 'expiresAt': time.time() + 900, 'title': 'Soon'}]
+        self.configure(secondary={'usedPercent': 100, 'windowDurationMins': 10080, 'resetsAt': time.time() + 86400 * 3},
+                       coupons={'availableCount': 2, 'credits': credits}, **data)
+
+    def test_auto_coupon_uses_earliest_expiring_coupon_when_weekly_limit_runs_out(self):
+        from codex_runner.cli import update_auto_coupon
+        sid = self.job['id']
+        self.weekly_out()
+        Worker(self.store).run(self.job)
+        job = self.store.get(sid)
+        self.assertEqual(job['status'], 'waiting')
+        self.assertIsNone(json.loads(self.fixture.read_text()).get('consumed'))
+        update_auto_coupon(self.store, sid, True)
+        self.assertLessEqual(self.store.get(sid)['next_run'], time.time())
+        Worker(self.store).run(self.store.get(sid))
+        data = json.loads(self.fixture.read_text())
+        self.assertEqual([c['creditId'] for c in data['consumed']], ['soon'])
+        self.assertEqual([c['id'] for c in data['coupons']['credits']], ['late'])
+        job = self.store.get(sid)
+        self.assertEqual((job['status'], job['quota_resumes']), ('complete', 1))
+        self.assertIn('automatic coupon Soon: reset', (self.store.base / 'jobs' / sid / 'runner.log').read_text())
+
+    def test_auto_coupon_is_not_spent_when_no_automatic_resume_is_left(self):
+        sid = self.job['id']
+        self.store.patch(sid, auto_coupon=True, max_quota_resumes=0)
+        self.weekly_out()
+        Worker(self.store).run(self.job)
+        self.assertEqual(self.store.get(sid)['status'], 'paused')
+        self.assertIsNone(json.loads(self.fixture.read_text()).get('consumed'))
+        self.assertFalse(self.fixture.with_suffix('.calls').exists())
+
+    def test_auto_coupon_ignores_five_hour_exhaustion_and_cli_toggles_it(self):
+        sid = self.job['id']
+        self.store.patch(sid, auto_coupon=True)
+        self.configure(used=100, coupons={'availableCount': 1, 'credits': None})
+        Worker(self.store).run(self.job)
+        self.assertEqual(self.store.get(sid)['status'], 'waiting')
+        self.assertIsNone(json.loads(self.fixture.read_text()).get('consumed'))
+        command = [sys.executable, '-m', 'codex_runner.cli', '--state-dir', str(self.store.base), 'auto-coupon', sid]
+        result = subprocess.run(command + ['--off'], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('runs out: off', result.stdout)
+        self.assertFalse(self.store.get(sid)['auto_coupon'])
+
     def test_limit_set_during_an_existing_quota_wait_allows_one_more_turn(self):
         from codex_runner.cli import update_auto_resume
         sid = self.job['id']

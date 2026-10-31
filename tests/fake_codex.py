@@ -32,13 +32,15 @@ elif sys.argv[1] == 'app-server':
             data.setdefault('consumed', []).append(msg['params'])
             if not coupons['availableCount']:
                 outcome = 'noCredit'
-            elif data.get('used', 0) == 0:
+            elif data.get('used', 0) == 0 and (data.get('secondary') or {}).get('usedPercent', 0) == 0:
                 outcome = 'nothingToReset'
             else:
                 wanted = msg['params'].get('creditId')
                 coupons['credits'] = [c for c in coupons.get('credits') or [] if wanted and c['id'] != wanted] if wanted else (coupons.get('credits') or [])[1:]
                 coupons['availableCount'] -= 1
                 data.update(coupons=coupons, used=0, limit_type=None)
+                if data.get('secondary'):
+                    data['secondary']['usedPercent'] = 0
                 outcome = 'reset'
             state.write_text(json.dumps(data))
             result = {'outcome': outcome}
