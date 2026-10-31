@@ -143,7 +143,8 @@ class ExecutionTests(unittest.TestCase):
         def ask(question):
             asked.append(question)
             return answers.pop(0)
-        with contextlib.redirect_stdout(out):
+        # Windows cannot run the .py fixture through a PATH lookup; use it as the resolved executable.
+        with contextlib.redirect_stdout(out), patch('codex_runner.cli.resolve_codex', return_value=str(FAKE)):
             coupon_command(self.store, Namespace(codex=str(FAKE), use=use, yes=yes), ask)
         return out.getvalue(), asked, json.loads(self.fixture.read_text())
 
